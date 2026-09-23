@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>三重枠ツール (Web版)</title>
+<style>
+  :root {
+    color-scheme: dark;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #2b2b2b;
+    color: #eee;
+    font-family: "Yu Gothic UI", "Meiryo", "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    box-sizing: border-box;
+  }
+  /* ---------- ツールバー ---------- */
+  #toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    background: #3a3a3a;
+    padding: 8px 10px;
+    border-bottom: 1px solid #1c1c1c;
+  }
+  #toolbar button {
+    background: #4a4a4a;
+    color: #f0f0f0;
+    border: 1px solid #5a5a5a;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #toolbar button:hover:not(:disabled) {
+    background: #5a5a5a;
+  }
+  #toolbar button:active:not(:disabled) {
+    background: #666;
+  }
+  #toolbar button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .sep {
+    width: 1px;
+    align-self: stretch;
+    background: #5a5a5a;
+    margin: 0 4px;
+  }
+  #thicknessBox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #333;
+    border: 1px solid #5a5a5a;
+    border-radius: 4px;
+    padding: 3px 6px;
+  }
+  #thicknessBox label {
+    font-size: 13px;
+    color: #ddd;
+    margin-right: 2px;
+  }
+  #thicknessBox button {
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+    padding: 0;
+    font-size: 15px;
+  }
+  #thicknessInput {
+    width: 48px;
+    text-align: center;
+    background: #222;
+    color: #fff;
+    border: 1px solid #5a5a5a;
+    border-radius: 3px;
+    font-size: 13px;
+    padding: 4px 2px;
+  }
+  #thicknessInput::-webkit-outer-spin-button,
+  #thicknessInput::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  #thicknessInput[type=number] {
+    -moz-appearance: textfield;
+  }
+  /* ---------- キャンバス領域 ---------- */
+  #canvasArea {
+    flex: 1 1 auto;
+    position: relative;
+    background: #3a3a3a;
+    overflow: hidden;
+    min-height: 0;
+  }
+  #view {
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: crosshair;
+  }
+  #placeholder {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #ccc;
+    font-size: 20px;
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+  }
+  #dropHint {
+    position: absolute;
+    inset: 0;
+    border: 3px dashed #7ab8ff;
+    background: rgba(122, 184, 255, 0.08);
+    display: none;
+    pointer-events: none;
+  }
+  #dropHint.active {
+    display: block;
+  }
+  /* ---------- 下部 ---------- */
+  #bottom {
+    flex: 0 0 auto;
+    background: #efefef;
+    color: #222;
+    padding: 4px 10px 6px;
+  }
+  #helpText {
+    font-size: 12px;
+    color: #333;
+  }
+  #statusText {
+    font-size: 12px;
+    font-weight: bold;
+    color: #b00000;
+    min-height: 16px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <button id="btnOpen" title="Ctrl+O">開く (Ctrl+O)</button>
+    <button id="btnCopy" title="Ctrl+C">コピー (Ctrl+C)</button>
+    <button id="btnSavePng" title="Ctrl+S">PNGで保存 (Ctrl+S)</button>
+    <button id="btnSaveJpg">JPGで保存</button>
+    <button id="btnUndo" title="Ctrl+Z">戻す (Ctrl+Z)</button>
+    <div class="sep"></div>
+    <div id="thicknessBox">
+      <label for="thicknessInput">線の太さ</label>
+      <button id="btnThickMinus" type="button">−</button>
+      <input id="thicknessInput" type="number" min="1" max="30" step="1" value="5">
+      <span style="font-size:12px;color:#ccc;">px</span>
+      <button id="btnThickPlus" type="button">＋</button>
+      <button id="btnThickReset" type="button" style="margin-left:4px;">5pxに戻す</button>
+    </div>
+  </div>
+
+  <div id="canvasArea">
+    <canvas id="view"></canvas>
+    <div id="placeholder">画像をドロップ、または Ctrl+V で貼り付け</div>
+    <div id="dropHint"></div>
+  </div>
+
+  <div id="bottom">
+    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
+    <div id="statusText"></div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="image/*" style="display:none;">
+
+<script>
+(function () {
+  "use strict";
+
+  // ============================================================
+  // 描画ロジック (純粋関数。UIから独立しており Node でも動く)
+  // ============================================================
+  const WHITE = "#FFFFFF";
+  const RED = "#ED1C24";
+  const LAYER_COLORS = [WHITE, RED, WHITE];
+  const DRAG_MARGIN_SLACK = 10;
+  const MIN_DRAG_PX = 3;
+  const UNDO_LIMIT = 50;
+  const DEFAULT_THICKNESS = 5;
+  const THICKNESS_MIN = 1;
+  const THICKNESS_MAX = 30;
+
+  function frameTotalWidth(thickness) {
+    return thickness * 3;
+  }
+
+  // (x0,y0,x1,y1) を左上→右下の順に並べ替える(クランプはしない)
+  function orderBox(box) {
+    let [x0, y0, x1, y1] = box.map((v) => Math.trunc(v));
+    if (x0 > x1) { const t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { const t = y0; y0 = y1; y1 = t; }
+    return [x0, y0, x1, y1];
+  }
+
+  // 各層 (色, 太さ, 外周矩形[両端を含む]) を外側から順に返す。入りきらない層は省く。
+  function frameLayerBoxes(box, thickness) {
+    const [x0, y0, x1, y1] = box;
+    const result = [];
+    let offset = 0;
+    for (let i = 0; i < 3; i++) {
+      const w = thickness;
+      const lx0 = x0 + offset, ly0 = y0 + offset, lx1 = x1 - offset, ly1 = y1 - offset;
+      if (lx0 > lx1 || ly0 > ly1) break;
+      result.push({ color: LAYER_COLORS[i], width: w, rect: [lx0, ly0, lx1, ly1] });
+      offset += w;
+    }
+    return result;
+  }
+
+  // 各層を、重ならない4本の帯 (fillRect用 [x,y,w,h]) に分解する。
+  // Python版 draw_preview と同じ分割方式を最終描画にも使うことで、
+  // strokeRect のにじみを避け、アンチエイリアスなしのピクセルぴったり描画にする。
+  function frameLayerBands(box, thickness) {
+    const layers = frameLayerBoxes(box, thickness);
+    const bands = [];
+    for (const { color, width, rect } of layers) {
+      const [x0, y0, x1, y1] = rect;
+      const ix0 = Math.min(x0 + width, x1 + 1);
+      const iy0 = Math.min(y0 + width, y1 + 1);
+      const ix1 = Math.max(x1 - width + 1, ix0);
+      const iy1 = Math.max(y1 - width + 1, iy0);
+      const X0 = x0, Y0 = y0, X1 = x1 + 1, Y1 = y1 + 1;
+      const candidates = [
+        [X0, Y0, X1, iy0],
+        [X0, iy1, X1, Y1],
+        [X0, iy0, ix0, iy1],
+        [ix1, iy0, X1, iy1],
+      ];
+      const rects = [];
+      for (const [rx0, ry0, rx1, ry1] of candidates) {
+        if (rx1 > rx0 && ry1 > ry0) rects.push([rx0, ry0, rx1 - rx0, ry1 - ry0]);
+      }
+      bands.push({ color, rects });
+    }
+    return bands;
+  }
+
+  // 画像の外まではみ出したドラッグ矩形に対応した拡張計算。
+  // box: (x0,y0,x1,y1) は「右端・下端が境界」となる半開区間(幅=x1-x0)。
+  // 画像範囲外(負の値・サイズ超過)も渡せる。1辺あたりの拡張量は枠総幅を上限にクランプ。
+  // 戻り値: { padLeft, padTop, padRight, padBottom, newW, newH, drawBox }
+  // drawBox は拡張後キャンバス上の、両端を含む座標系の描画対象矩形。
+  function computeExpand(w, h, box, thickness) {
+    const maxPad = frameTotalWidth(thickness);
+    let [x0, y0, x1, y1] = orderBox(box);
+
+    const padLeft = Math.max(0, Math.min(-x0, maxPad));
+    const padTop = Math.max(0, Math.min(-y0, maxPad));
+    const padRight = Math.max(0, Math.min(x1 - w, maxPad));
+    const padBottom = Math.max(0, Math.min(y1 - h, maxPad));
+
+    x0 = Math.max(x0, -padLeft);
+    y0 = Math.max(y0, -padTop);
+    x1 = Math.min(x1, w + padRight);
+    y1 = Math.min(y1, h + padBottom);
+
+    const newW = w + padLeft + padRight;
+    const newH = h + padTop + padBottom;
+
+    const sx0 = x0 + padLeft, sy0 = y0 + padTop, sx1 = x1 + padLeft, sy1 = y1 + padTop;
+    const drawBox = [sx0, sy0, sx1 - 1, sy1 - 1];
+
+    return { padLeft, padTop, padRight, padBottom, newW, newH, drawBox };
+  }
+
+  // Node/ブラウザ両方から使えるよう window があれば公開(検証用)
+  const CORE = {
+    frameTotalWidth, orderBox, frameLayerBoxes, frameLayerBands, computeExpand,
+    LAYER_COLORS, DRAG_MARGIN_SLACK, MIN_DRAG_PX, UNDO_LIMIT,
+    DEFAULT_THICKNESS, THICKNESS_MIN, THICKNESS_MAX,
+  };
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = CORE;
+  }
+  if (typeof window !== "undefined") {
+    window.__TRIPLE_FRAME_CORE__ = CORE;
+  }
+
+  if (typeof document === "undefined") {
+    return; // Node環境でテスト読み込みされた場合はここで終了
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
+  const el = (id) => document.getElementById(id);
+  const canvasArea = el("canvasArea");
+  const view = el("view");
+  const vctx = view.getContext("2d");
+  const placeholder = el("placeholder");
+  const statusText = el("statusText");
+  const fileInput = el("fileInput");
+  const thicknessInput = el("thicknessInput");
+
+  let sourceCanvas = null;   // 加工中の画像(full解像度)
+  let history = [];          // Undo用 (canvas のクローンの配列)
+  let modified = false;
+  let originalBaseName = null; // 拡張子抜きの元ファイル名 (保存名に使う)
+  let pasteCounter = 0;
+  let scale = 1, offsetX = 0, offsetY = 0;
+  let dragStart = null;      // 画像座標系 [x,y]
+  let dragBox = null;        // 画像座標系 [x0,y0,x1,y1] (両端を含む)
+  let thickness = DEFAULT_THICKNESS;
+
+  // ---------- 太さの永続化 ----------
+  function loadThickness() {
+    try {
+      const raw = localStorage.getItem("triple_frame_thickness");
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n >= THICKNESS_MIN && n <= THICKNESS_MAX) return n;
+    } catch (e) { /* 読めなくても初期値5で動く */ }
+    return DEFAULT_THICKNESS;
+  }
+  function saveThickness(n) {
+    try { localStorage.setItem("triple_frame_thickness", String(n)); } catch (e) { /* 保存失敗は無視 */ }
+  }
+  function setThickness(n) {
+    n = Math.max(THICKNESS_MIN, Math.min(THICKNESS_MAX, Math.round(n) || DEFAULT_THICKNESS));
+    thickness = n;
+    thicknessInput.value = String(n);
+    saveThickness(n);
+  }
+  thickness = loadThickness();
+  thicknessInput.value = String(thickness);
+
+  // ---------- 共通 ----------
+  function setStatus(msg) { statusText.textContent = msg; }
+
+  function cloneCanvas(src) {
+    const c = document.createElement("canvas");
+    c.width = src.width;
+    c.height = src.height;
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(src, 0, 0);
+    return c;
+  }
+
+  function updateTitle() {
+    const mark = modified ? "*" : "";
+    const name = originalBaseName ? originalBaseName : (sourceCanvas ? "クリップボードの画像" : "");
+    document.title = (name ? `${mark}${name} - ` : "") + "三重枠ツール (Web版)";
+  }
+
+  function updateButtons() {
+    const has = !!sourceCanvas;
+    el("btnCopy").disabled = !has;
+    el("btnSavePng").disabled = !has;
+    el("btnSaveJpg").disabled = !has;
+    el("btnUndo").disabled = history.length === 0;
+  }
+
+  // ---------- 表示 ----------
+  function resizeViewToContainer() {
+    const rect = canvasArea.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    view.style.width = rect.width + "px";
+    view.style.height = rect.height + "px";
+    view.width = Math.max(1, Math.round(rect.width * dpr));
+    view.height = Math.max(1, Math.round(rect.height * dpr));
+    vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function redraw() {
+    resizeViewToContainer();
+    const rect = canvasArea.getBoundingClientRect();
+    const cw = Math.max(1, rect.width), ch = Math.max(1, rect.height);
+    vctx.imageSmoothingEnabled = false;
+    vctx.clearRect(0, 0, cw, ch);
+
+    if (!sourceCanvas) {
+      placeholder.style.display = "block";
+      return;
+    }
+    placeholder.style.display = "none";
+
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const margin = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
+    scale = Math.min(1, (cw - margin * 2) / w, (ch - margin * 2) / h);
+    if (!(scale > 0)) scale = Math.min(1, cw / w, ch / h) || 0.01;
+
+    const dw = Math.max(1, Math.round(w * scale));
+    const dh = Math.max(1, Math.round(h * scale));
+    offsetX = Math.round((cw - dw) / 2);
+    offsetY = Math.round((ch - dh) / 2);
+
+    vctx.drawImage(sourceCanvas, 0, 0, w, h, offsetX, offsetY, dw, dh);
+
+    if (dragBox) drawPreview(dragBox);
+  }
+
+  function drawPreview(box) {
+    const bands = frameLayerBands(box, thickness);
+    for (const { color, rects } of bands) {
+      vctx.fillStyle = color;
+      for (const [x, y, ww, hh] of rects) {
+        vctx.fillRect(offsetX + x * scale, offsetY + y * scale, Math.max(1, ww * scale), Math.max(1, hh * scale));
+      }
+    }
+  }
+
+  // ---------- 座標変換 ----------
+  function canvasToImage(cx, cy) {
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const ix = Math.trunc((cx - offsetX) / scale);
+    const iy = Math.trunc((cy - offsetY) / scale);
+    const pad = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
+    return [
+      Math.max(-pad, Math.min(ix, w - 1 + pad)),
+      Math.max(-pad, Math.min(iy, h - 1 + pad)),
+    ];
+  }
+
+  function eventToCanvasXY(evt) {
+    const rect = view.getBoundingClientRect();
+    return [evt.clientX - rect.left, evt.clientY - rect.top];
+  }
+
+  // ---------- 画像の設定 ----------
+  function setImage(canvas, baseName, sourceDesc) {
+    sourceCanvas = canvas;
+    originalBaseName = baseName;
+    history = [];
+    modified = false;
+    dragStart = dragBox = null;
+    updateTitle();
+    updateButtons();
+    redraw();
+    let msg = `${sourceDesc}を読み込みました(${canvas.width}×${canvas.height}px)`;
+    if (scale < 1) msg += `  ※画面に収まるよう ${Math.round(scale * 100)}% で表示中(保存・コピーは元のサイズ)`;
+    setStatus(msg);
+  }
+
+  function imageFromBitmapLike(bitmap) {
+    const c = document.createElement("canvas");
+    c.width = bitmap.width;
+    c.height = bitmap.height;
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bitmap, 0, 0);
+    return c;
+  }
+
+  async function loadFile(file) {
+    if (sourceCanvas && modified && !confirmDiscard()) return;
+    try {
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      } catch (e) {
+        bitmap = await createImageBitmap(file);
+      }
+      const canvas = imageFromBitmapLike(bitmap);
+      const base = file.name ? file.name.replace(/\.[^.]+$/, "") : null;
+      setImage(canvas, base, (file.name || "画像") + " ");
+    } catch (e) {
+      window.alert("画像として開けませんでした:\n" + (file.name || "") + "\n\n" + e);
+    }
+  }
+
+  function confirmDiscard() {
+    if (sourceCanvas && modified) {
+      return window.confirm("保存していない変更があります。\n変更を破棄してよろしいですか?");
+    }
+    return true;
+  }
+
+  // ---------- ドラッグ操作 ----------
+  view.addEventListener("mousedown", (e) => {
+    if (!sourceCanvas || e.button !== 0) return;
+    const [cx, cy] = eventToCanvasXY(e);
+    dragStart = canvasToImage(cx, cy);
+    dragBox = null;
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!sourceCanvas || !dragStart) return;
+    const [cx, cy] = eventToCanvasXY(e);
+    const [ix, iy] = canvasToImage(cx, cy);
+    dragBox = orderBox([dragStart[0], dragStart[1], ix, iy]);
+    redraw();
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (!sourceCanvas || !dragStart) return;
+    const [cx, cy] = eventToCanvasXY(e);
+    const [ix, iy] = canvasToImage(cx, cy);
+    const box = orderBox([dragStart[0], dragStart[1], ix, iy]);
+    dragStart = null;
+    dragBox = null;
+
+    if (box[2] - box[0] < MIN_DRAG_PX || box[3] - box[1] < MIN_DRAG_PX) {
+      redraw();
+      setStatus("範囲が小さすぎるため枠を描きませんでした");
+      return;
+    }
+    pushHistory();
+    // box は両端を含む座標系。computeExpand は半開区間を取るので x1,y1 に+1
+    const expandBox = [box[0], box[1], box[2] + 1, box[3] + 1];
+    applyFrameToImage(expandBox);
+  });
+
+  function pushHistory() {
+    history.push(cloneCanvas(sourceCanvas));
+    if (history.length > UNDO_LIMIT) history.shift();
+    updateButtons();
+  }
+
+  function applyFrameToImage(expandBox) {
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const { padLeft, padTop, padRight, padBottom, newW, newH, drawBox } =
+      computeExpand(w, h, expandBox, thickness);
+
+    let target;
+    if (padLeft || padTop || padRight || padBottom) {
+      target = document.createElement("canvas");
+      target.width = newW;
+      target.height = newH;
+      const tctx = target.getContext("2d");
+      tctx.imageSmoothingEnabled = false;
+      tctx.fillStyle = "#FFFFFF";
+      tctx.fillRect(0, 0, newW, newH);
+      tctx.drawImage(sourceCanvas, padLeft, padTop);
+    } else {
+      target = cloneCanvas(sourceCanvas);
+    }
+    const tctx = target.getContext("2d");
+    tctx.imageSmoothingEnabled = false;
+    const bands = frameLayerBands(drawBox, thickness);
+    for (const { color, rects } of bands) {
+      tctx.fillStyle = color;
+      for (const [x, y, ww, hh] of rects) tctx.fillRect(x, y, ww, hh);
+    }
+
+    sourceCanvas = target;
+    modified = true;
+    updateTitle();
+    updateButtons();
+    redraw();
+
+    if (padLeft || padTop || padRight || padBottom) {
+      const parts = [];
+      if (padLeft) parts.push(`左+${padLeft}px`);
+      if (padTop) parts.push(`上+${padTop}px`);
+      if (padRight) parts.push(`右+${padRight}px`);
+      if (padBottom) parts.push(`下+${padBottom}px`);
+      setStatus(`画像を${parts.join("・")} 広げました(最終サイズ ${newW}×${newH}px)`);
+    } else {
+      const bw = expandBox[2] - expandBox[0], bh = expandBox[3] - expandBox[1];
+      setStatus(`枠を描きました(位置 ${Math.max(0, expandBox[0])},${Math.max(0, expandBox[1])} / 大きさ ${bw}×${bh}px)`);
+    }
+  }
+
+  // ---------- Undo ----------
+  function undo() {
+    if (!history.length) {
+      setStatus("これ以上戻せません");
+      return;
+    }
+    sourceCanvas = history.pop();
+    modified = true;
+    updateTitle();
+    updateButtons();
+    redraw();
+    setStatus(`1つ戻しました(あと ${history.length} 回戻せます)`);
+  }
+
+  // ---------- コピー / 保存 ----------
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob); else reject(new Error("画像の生成に失敗しました"));
+      }, type, quality);
+    });
+  }
+
+  function flattenToWhite(canvas) {
+    const c = document.createElement("canvas");
+    c.width = canvas.width;
+    c.height = canvas.height;
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(canvas, 0, 0);
+    return c;
+  }
+
+  async function copyImage() {
+    if (!sourceCanvas) { setStatus("コピーする画像がありません"); return; }
+    try {
+      if (!navigator.clipboard || !window.ClipboardItem) throw new Error("このブラウザはクリップボードへの画像コピーに対応していません");
+      const blob = await canvasToBlob(sourceCanvas, "image/png");
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      setStatus("クリップボードにコピーしました(他のアプリに Ctrl+V で貼り付けできます)");
+    } catch (e) {
+      setStatus("コピーに失敗しました。保存ボタンを使ってください(" + (e && e.message ? e.message : e) + ")");
+    }
+  }
+
+  function timestampName() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return `frame_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  async function savePng() {
+    if (!sourceCanvas) { setStatus("保存する画像がありません"); return; }
+    try {
+      const blob = await canvasToBlob(sourceCanvas, "image/png");
+      const name = (originalBaseName || timestampName()) + ".png";
+      downloadBlob(blob, name);
+      modified = false;
+      updateTitle();
+      setStatus(`保存しました: ${name}`);
+    } catch (e) {
+      window.alert("保存できませんでした:\n" + e);
+    }
+  }
+
+  async function saveJpg() {
+    if (!sourceCanvas) { setStatus("保存する画像がありません"); return; }
+    try {
+      const flat = flattenToWhite(sourceCanvas);
+      const blob = await canvasToBlob(flat, "image/jpeg", 0.95);
+      const name = (originalBaseName || timestampName()) + ".jpg";
+      downloadBlob(blob, name);
+      modified = false;
+      updateTitle();
+      setStatus(`保存しました: ${name}`);
+    } catch (e) {
+      window.alert("保存できませんでした:\n" + e);
+    }
+  }
+
+  // ---------- 読み込み: ドロップ / 貼り付け / ファイルを開く ----------
+  ["dragenter", "dragover"].forEach((evt) => {
+    window.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      el("dropHint").classList.add("active");
+    });
+  });
+  ["dragleave", "drop"].forEach((evt) => {
+    window.addEventListener(evt, (e) => {
+      if (evt === "dragleave" && e.target !== document.documentElement && e.relatedTarget) return;
+      el("dropHint").classList.remove("active");
+    });
+  });
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) {
+      const imgFile = Array.from(files).find((f) => f.type.startsWith("image/")) || files[0];
+      loadFile(imgFile);
+    }
+  });
+
+  window.addEventListener("paste", (e) => {
+    const active = document.activeElement;
+    const isTextField = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    if (isTextField) return; // テキスト入力中の通常のペーストは邪魔しない
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type && item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        if (sourceCanvas && modified && !confirmDiscard()) return;
+        createImageBitmap(file).then((bitmap) => {
+          const canvas = imageFromBitmapLike(bitmap);
+          pasteCounter++;
+          setImage(canvas, null, "クリップボードの画像");
+        }).catch((err) => {
+          window.alert("クリップボードの読み込みに失敗しました:\n" + err);
+        });
+        return;
+      }
+    }
+    setStatus("クリップボードに画像がありません");
+  });
+
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (f) loadFile(f);
+  });
+
+  el("btnOpen").addEventListener("click", () => fileInput.click());
+  el("btnCopy").addEventListener("click", copyImage);
+  el("btnSavePng").addEventListener("click", savePng);
+  el("btnSaveJpg").addEventListener("click", saveJpg);
+  el("btnUndo").addEventListener("click", undo);
+
+  // ---------- 線の太さ UI ----------
+  function commitThicknessInput() {
+    const v = parseInt(thicknessInput.value, 10);
+    setThickness(Number.isFinite(v) ? v : DEFAULT_THICKNESS);
+    redraw();
+  }
+  thicknessInput.addEventListener("change", commitThicknessInput);
+  el("btnThickMinus").addEventListener("click", () => { setThickness(thickness - 1); redraw(); });
+  el("btnThickPlus").addEventListener("click", () => { setThickness(thickness + 1); redraw(); });
+  el("btnThickReset").addEventListener("click", () => { setThickness(DEFAULT_THICKNESS); redraw(); });
+
+  // ---------- キーボードショートカット ----------
+  window.addEventListener("keydown", (e) => {
+    const active = document.activeElement;
+    const isTextField = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    if (!e.ctrlKey && !e.metaKey) return;
+    const key = e.key.toLowerCase();
+    if (isTextField) {
+      // 数値入力にフォーカスがある間は、テキスト操作の邪魔をしないショートカットのみ許可しない
+      return;
+    }
+    if (key === "o") { e.preventDefault(); fileInput.click(); }
+    else if (key === "s") { e.preventDefault(); savePng(); }
+    else if (key === "z") { e.preventDefault(); undo(); }
+    else if (key === "c") { e.preventDefault(); copyImage(); }
+  });
+
+  window.addEventListener("beforeunload", (e) => {
+    if (sourceCanvas && modified) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  window.addEventListener("resize", redraw);
+
+  // ---------- 初期化 ----------
+  updateButtons();
+  redraw();
+  setStatus("画像を読み込んでください");
+})();
+</script>
+</body>
+</html>
