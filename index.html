@@ -20,7 +20,7 @@
   #app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: calc(100vh - var(--ftn-h, 0px));
     width: 100vw;
     box-sizing: border-box;
   }
@@ -771,5 +771,6 @@
   setStatus("画像を読み込んでください");
 })();
 </script>
+<script src="https://freetierinc-team.github.io/nav.js"></script>
 </body>
 </html>
