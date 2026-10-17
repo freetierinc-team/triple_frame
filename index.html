@@ -106,6 +106,35 @@
   #thicknessInput[type=number] {
     -moz-appearance: textfield;
   }
+  #fineBox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #333;
+    border: 1px solid #5a5a5a;
+    border-radius: 4px;
+    padding: 3px 6px;
+  }
+  #fineBox label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #ddd;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+  #fineBox input[type=checkbox] {
+    margin: 0;
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+  }
+  #fineBox button {
+    padding: 3px 8px;
+    font-size: 12px;
+  }
   /* ---------- キャンバス領域 ---------- */
   #canvasArea {
     flex: 1 1 auto;
@@ -166,7 +195,7 @@
     gap: 4px 12px;
     margin-top: 2px;
   }
-  #sizeLabel {
+  #posLabel, #selLabel, #sizeLabel {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -239,6 +268,11 @@
       <button id="btnThickPlus" type="button">＋</button>
       <button id="btnThickReset" type="button" style="margin-left:4px;">5pxに戻す</button>
     </div>
+    <div id="fineBox" title="オンにすると、ドラッグで描いた枠を確定前に移動・大きさ変更できます">
+      <label for="fineMode"><input id="fineMode" type="checkbox">微調整モード</label>
+      <button id="btnFineCommit" type="button" title="Enter" disabled>確定 (Enter)</button>
+      <button id="btnFineCancel" type="button" title="Esc" disabled>取消 (Esc)</button>
+    </div>
   </div>
 
   <div id="canvasArea">
@@ -249,9 +283,11 @@
   </div>
 
   <div id="bottom">
-    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く / Ctrl+ホイール: 拡大縮小 / ホイール: スクロール / スペース+ドラッグ: 移動 ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
+    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く / Ctrl+ホイール: 拡大縮小 / ホイール: スクロール / スペース+ドラッグ: 移動 / 微調整モード: 枠をドラッグ・十字キーで移動、ハンドルやCtrl+十字キーで大きさ変更(Shiftで10px)、Enter: 確定、Esc: 取消 ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
     <div id="statusBar">
-      <div id="sizeLabel"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2"><rect x="1.5" y="2.5" width="11" height="9" rx="0.5" stroke-dasharray="2 1.5"/></svg><span id="sizeText">—</span></div>
+      <div id="posLabel" title="マウス位置(画像のピクセル座標)"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2" stroke-linejoin="round"><path d="M3 1.5v10l2.6-2.4 1.8 3.9 1.6-.7-1.8-3.8H11z"/></svg><span id="posText"></span></div>
+      <div id="selLabel" title="ドラッグ中の範囲の大きさ"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2"><rect x="1.5" y="2.5" width="11" height="9" rx="0.5" stroke-dasharray="2 1.5"/></svg><span id="selText"></span></div>
+      <div id="sizeLabel" title="画像の大きさ"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2"><path d="M3.5 1v9.5H13M1 3.5h9.5V13"/></svg><span id="sizeText">—</span></div>
       <div id="statusText"></div>
       <div id="zoomBar">
         <button id="btnZoomFit" type="button" title="全体表示(ウィンドウに合わせる) Ctrl+0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><rect x="8" y="8.5" width="8" height="7" rx="0.8"/></svg></button>
@@ -417,6 +453,14 @@
   let dragStart = null;      // 画像座標系 [x,y]
   let dragBox = null;        // 画像座標系 [x0,y0,x1,y1] (両端を含む)
   let thickness = DEFAULT_THICKNESS;
+  // 微調整モード
+  const fineModeInput = el("fineMode");
+  let fineMode = false;
+  let pending = null;        // 確定前の枠 画像座標系 [x0,y0,x1,y1] (両端を含む整数)
+  let editOp = null;         // 仮の枠の移動・リサイズ中の状態
+  let hoverCursor = null;    // 仮の枠の上にいるときのカーソル
+  const HANDLE_PX = 8;       // ハンドルの画面上の大きさ(倍率に依存しない)
+  const HANDLE_HIT_PX = 6;   // ハンドルの当たり判定(中心からの距離)
 
   // ---------- 太さの永続化 ----------
   function loadThickness() {
@@ -438,6 +482,16 @@
   }
   thickness = loadThickness();
   thicknessInput.value = String(thickness);
+
+  // ---------- 微調整モードの永続化 ----------
+  function loadFineMode() {
+    try { return localStorage.getItem("triple_frame_fine_mode") === "1"; } catch (e) { return false; }
+  }
+  function saveFineMode(on) {
+    try { localStorage.setItem("triple_frame_fine_mode", on ? "1" : "0"); } catch (e) { /* 保存失敗は無視 */ }
+  }
+  fineMode = loadFineMode();
+  fineModeInput.checked = fineMode;
 
   // ---------- 共通 ----------
   function setStatus(msg) { statusText.textContent = msg; }
@@ -463,7 +517,9 @@
     el("btnCopy").disabled = !has;
     el("btnSavePng").disabled = !has;
     el("btnSaveJpg").disabled = !has;
-    el("btnUndo").disabled = history.length === 0;
+    el("btnUndo").disabled = history.length === 0 && !pending;
+    el("btnFineCommit").disabled = !pending;
+    el("btnFineCancel").disabled = !pending;
     ["btnZoomOut", "btnZoomIn", "btnZoomFit", "zoomSelect", "zoomSlider"].forEach((id) => { el(id).disabled = !has; });
   }
 
@@ -512,6 +568,7 @@
         offsetX + sx0 * scale, offsetY + sy0 * scale, (sx1 - sx0) * scale, (sy1 - sy0) * scale);
     }
 
+    if (pending) drawPending(pending);
     if (dragBox) drawPreview(dragBox);
     updateZoomLabel();
   }
@@ -557,11 +614,11 @@
     redraw();
   });
 
-  // 「全体表示」の倍率(ウィンドウに収まる倍率、最大100%)
+  // 「全体表示」の倍率(ウィンドウいっぱいに収まる倍率。小さい画像は拡大する)
   function fitScaleFor(cw, ch, w, h) {
     const margin = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
-    let s = Math.min(1, (cw - margin * 2) / w, (ch - margin * 2) / h);
-    if (!(s > 0)) s = Math.min(1, cw / w, ch / h) || 0.01;
+    let s = Math.min(ZOOM_MAX, (cw - margin * 2) / w, (ch - margin * 2) / h);
+    if (!(s > 0)) s = Math.min(ZOOM_MAX, cw / w, ch / h) || 0.01;
     return s;
   }
 
@@ -604,7 +661,8 @@
     redraw();
   }
   function updateCursor() {
-    view.style.cursor = panning ? "grabbing" : (spaceDown ? "grab" : "crosshair");
+    view.style.cursor = panning ? "grabbing" : (spaceDown ? "grab" :
+      ((editOp && editOp.cursor) || hoverCursor || "crosshair"));
   }
 
   function drawPreview(box) {
@@ -615,6 +673,177 @@
         vctx.fillRect(offsetX + x * scale, offsetY + y * scale, Math.max(1, ww * scale), Math.max(1, hh * scale));
       }
     }
+  }
+
+  // ---------- 微調整モード: 仮の枠 ----------
+  // 仮の枠の外接枠(画面座標)。右端・下端は境界(半開)
+  function pendingScreenRect(box) {
+    return {
+      L: offsetX + box[0] * scale, T: offsetY + box[1] * scale,
+      R: offsetX + (box[2] + 1) * scale, B: offsetY + (box[3] + 1) * scale,
+    };
+  }
+  // 8個のハンドル: 名前 → 画面座標の中心
+  function pendingHandles(box) {
+    const { L, T, R, B } = pendingScreenRect(box);
+    const mx = (L + R) / 2, my = (T + B) / 2;
+    return [
+      ["nw", L, T], ["ne", R, T], ["sw", L, B], ["se", R, B],
+      ["n", mx, T], ["s", mx, B], ["w", L, my], ["e", R, my],
+    ];
+  }
+  const HANDLE_CURSORS = {
+    nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize",
+    n: "ns-resize", s: "ns-resize", w: "ew-resize", e: "ew-resize", move: "move",
+  };
+  // 画面座標 (cx,cy) が仮の枠のどこに当たるか: ハンドル名 / "move" / null(外)
+  function hitPending(cx, cy) {
+    if (!pending) return null;
+    for (const [name, hx, hy] of pendingHandles(pending)) {
+      if (Math.abs(cx - hx) <= HANDLE_HIT_PX && Math.abs(cy - hy) <= HANDLE_HIT_PX) return name;
+    }
+    const { L, T, R, B } = pendingScreenRect(pending);
+    if (cx >= L && cx < R && cy >= T && cy < B) return "move";
+    return null;
+  }
+
+  function drawPending(box) {
+    drawPreview(box);
+    const { L, T, R, B } = pendingScreenRect(box);
+    // 選択中が分かる細い点線の外接枠(白の実線の上に黒の点線)
+    const x = Math.round(L) - 0.5, y = Math.round(T) - 0.5;
+    const w = Math.round(R) - Math.round(L) + 1, h = Math.round(B) - Math.round(T) + 1;
+    vctx.save();
+    vctx.lineWidth = 1;
+    vctx.setLineDash([]);
+    vctx.strokeStyle = "#FFFFFF";
+    vctx.strokeRect(x, y, w, h);
+    vctx.setLineDash([4, 3]);
+    vctx.strokeStyle = "#000000";
+    vctx.strokeRect(x, y, w, h);
+    vctx.setLineDash([]);
+    // ハンドル(画面上で一定サイズ)
+    const hs = HANDLE_PX;
+    for (const [, hx, hy] of pendingHandles(box)) {
+      const rx = Math.round(hx - hs / 2) + 0.5, ry = Math.round(hy - hs / 2) + 0.5;
+      vctx.fillStyle = "#FFFFFF";
+      vctx.fillRect(rx, ry, hs - 1, hs - 1);
+      vctx.strokeStyle = "#000000";
+      vctx.strokeRect(rx, ry, hs - 1, hs - 1);
+    }
+    vctx.restore();
+  }
+
+  // 仮の枠が取れる範囲(canvasToImage のクランプ範囲と同じ)
+  function pendingLimits() {
+    const pad = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
+    return { minX: -pad, minY: -pad, maxX: sourceCanvas.width - 1 + pad, maxY: sourceCanvas.height - 1 + pad };
+  }
+  // 大きさを保ったまま範囲内に収める(範囲より大きい場合は範囲に合わせて縮める)
+  function clampMove(box) {
+    let [x0, y0, x1, y1] = box;
+    const { minX, minY, maxX, maxY } = pendingLimits();
+    if (x1 > maxX) { x0 -= x1 - maxX; x1 = maxX; }
+    if (x0 < minX) { x1 += minX - x0; x0 = minX; }
+    if (y1 > maxY) { y0 -= y1 - maxY; y1 = maxY; }
+    if (y0 < minY) { y1 += minY - y0; y0 = minY; }
+    x1 = Math.min(x1, maxX); y1 = Math.min(y1, maxY);
+    return [x0, y0, x1, y1];
+  }
+  // 各辺を範囲内に収め、最小サイズ(MIN_DRAG_PX)を保つ
+  function clampEdges(box) {
+    let [x0, y0, x1, y1] = box;
+    const { minX, minY, maxX, maxY } = pendingLimits();
+    x0 = Math.max(minX, Math.min(x0, maxX - MIN_DRAG_PX));
+    y0 = Math.max(minY, Math.min(y0, maxY - MIN_DRAG_PX));
+    x1 = Math.min(maxX, Math.max(x1, x0 + MIN_DRAG_PX));
+    y1 = Math.min(maxY, Math.max(y1, y0 + MIN_DRAG_PX));
+    return [x0, y0, x1, y1];
+  }
+
+  function pendingStatus() {
+    if (!pending) return;
+    const [x0, y0, x1, y1] = pending;
+    const W = x1 - x0 + 1, H = y1 - y0 + 1;
+    el("selText").textContent = `${W} × ${H}px`;
+    setStatus(`微調整中: 位置 ${x0},${y0} / 大きさ ${W}×${H}px(Enterで確定・Escで取消)`);
+  }
+
+  function setPending(box) {
+    pending = box;
+    pendingStatus();
+    updateButtons();
+    redraw();
+  }
+
+  // 仮の枠を画像に焼き込む(通常モードのドラッグ確定と同じ処理)
+  function commitPending() {
+    if (!pending) return false;
+    const box = pending;
+    pending = null;
+    editOp = null;
+    hoverCursor = null;
+    updateCursor();
+    el("selText").textContent = "";
+    pushHistory();
+    // box は両端を含む座標系。computeExpand は半開区間を取るので x1,y1 に+1
+    applyFrameToImage([box[0], box[1], box[2] + 1, box[3] + 1]);
+    return true;
+  }
+
+  function cancelPending() {
+    if (!pending) return false;
+    pending = null;
+    editOp = null;
+    hoverCursor = null;
+    updateCursor();
+    el("selText").textContent = "";
+    updateButtons();
+    redraw();
+    setStatus("微調整中の枠を取り消しました");
+    return true;
+  }
+
+  // 移動 (dx,dy) / 右端・下端の伸縮 (dw,dh)。キー操作用
+  function nudgePending(dx, dy, dw, dh) {
+    if (!pending) return;
+    let [x0, y0, x1, y1] = pending;
+    if (dw || dh) {
+      setPending(clampEdges([x0, y0, x1 + dw, y1 + dh]));
+    } else {
+      setPending(clampMove([x0 + dx, y0 + dy, x1 + dx, y1 + dy]));
+    }
+  }
+
+  // 画面座標 → 画像座標(クランプなし・小数)
+  function canvasToImageRaw(cx, cy) {
+    return [(cx - offsetX) / scale, (cy - offsetY) / scale];
+  }
+
+  function updateEditOp(cx, cy) {
+    const [rx, ry] = canvasToImageRaw(cx, cy);
+    // 通過したピクセルの境界数でずらす(ピクセル単位でスナップ)
+    const dx = Math.floor(rx) - Math.floor(editOp.rx);
+    const dy = Math.floor(ry) - Math.floor(editOp.ry);
+    let [x0, y0, x1, y1] = editOp.orig;
+    if (editOp.type === "move") {
+      setPending(clampMove([x0 + dx, y0 + dy, x1 + dx, y1 + dy]));
+      return;
+    }
+    const h = editOp.type;
+    const { minX, minY, maxX, maxY } = pendingLimits();
+    if (h.includes("w")) x0 = Math.max(minX, Math.min(x0 + dx, x1 - MIN_DRAG_PX));
+    if (h.includes("e")) x1 = Math.min(maxX, Math.max(x1 + dx, x0 + MIN_DRAG_PX));
+    if (h.includes("n")) y0 = Math.max(minY, Math.min(y0 + dy, y1 - MIN_DRAG_PX));
+    if (h.includes("s")) y1 = Math.min(maxY, Math.max(y1 + dy, y0 + MIN_DRAG_PX));
+    setPending([x0, y0, x1, y1]);
+  }
+
+  function setFineMode(on) {
+    fineMode = !!on;
+    fineModeInput.checked = fineMode;
+    saveFineMode(fineMode);
+    if (!fineMode && pending) commitPending();
   }
 
   // ---------- 座標変換 ----------
@@ -642,8 +871,10 @@
     modified = false;
     fitMode = true;
     panning = null;
+    pending = editOp = hoverCursor = null;
     updateCursor();
     dragStart = dragBox = null;
+    el("selText").textContent = "";
     updateTitle();
     updateButtons();
     redraw();
@@ -689,13 +920,25 @@
     if (!sourceCanvas) return;
     if (e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown)) {
       e.preventDefault(); // 中クリックの自動スクロール等を抑止
-      if (dragStart || panning) return;
+      if (dragStart || panning || editOp) return;
       panning = { x: e.clientX, y: e.clientY, ox: offsetX, oy: offsetY, button: e.button };
       updateCursor();
       return;
     }
     if (e.button !== 0) return;
     const [cx, cy] = eventToCanvasXY(e);
+    if (pending) {
+      const hit = hitPending(cx, cy);
+      if (hit) {
+        e.preventDefault();
+        const [rx, ry] = canvasToImageRaw(cx, cy);
+        editOp = { type: hit, rx, ry, orig: pending.slice(), cursor: HANDLE_CURSORS[hit] };
+        updateCursor();
+        return;
+      }
+      // 外側からのドラッグ: 今の仮の枠を確定してから新しい枠を描き始める
+      commitPending();
+    }
     dragStart = canvasToImage(cx, cy);
     dragBox = null;
   });
@@ -724,17 +967,45 @@
   // ツールバー等の上での Ctrl+ホイール(ブラウザ自体のズーム)も抑止
   window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
 
+  // ステータスバーのマウス座標(画像のピクセル座標。画像外はマイナスや画像サイズ超えの値になる)
+  function updatePosLabel(e) {
+    const rect = view.getBoundingClientRect();
+    const inside = e && e.clientX >= rect.left && e.clientX < rect.right &&
+      e.clientY >= rect.top && e.clientY < rect.bottom;
+    if (!sourceCanvas || !inside) { el("posText").textContent = ""; return; }
+    const [cx, cy] = eventToCanvasXY(e);
+    const ix = Math.floor((cx - offsetX) / scale);
+    const iy = Math.floor((cy - offsetY) / scale);
+    el("posText").textContent = `${ix}, ${iy}px`;
+  }
+  view.addEventListener("mouseleave", () => updatePosLabel(null));
+
   window.addEventListener("mousemove", (e) => {
+    updatePosLabel(e);
     if (panning) {
       offsetX = panning.ox + (e.clientX - panning.x);
       offsetY = panning.oy + (e.clientY - panning.y);
       if (!fitMode) redraw();
       return;
     }
+    if (sourceCanvas && editOp) {
+      const [cx, cy] = eventToCanvasXY(e);
+      updateEditOp(cx, cy);
+      return;
+    }
+    if (pending && !dragStart) {
+      const [cx, cy] = eventToCanvasXY(e);
+      const inside = e.target === view;
+      const hit = inside ? hitPending(cx, cy) : null;
+      const cur = hit ? HANDLE_CURSORS[hit] : null;
+      if (cur !== hoverCursor) { hoverCursor = cur; updateCursor(); }
+      return;
+    }
     if (!sourceCanvas || !dragStart) return;
     const [cx, cy] = eventToCanvasXY(e);
     const [ix, iy] = canvasToImage(cx, cy);
     dragBox = orderBox([dragStart[0], dragStart[1], ix, iy]);
+    el("selText").textContent = `${dragBox[2] - dragBox[0] + 1} × ${dragBox[3] - dragBox[1] + 1}px`;
     redraw();
   });
 
@@ -743,16 +1014,32 @@
       if (e.button === panning.button) { panning = null; updateCursor(); }
       return;
     }
+    if (editOp) {
+      if (e.button !== 0) return;
+      editOp = null;
+      updateCursor();
+      pendingStatus();
+      return;
+    }
     if (!sourceCanvas || !dragStart || e.button !== 0) return;
     const [cx, cy] = eventToCanvasXY(e);
     const [ix, iy] = canvasToImage(cx, cy);
     const box = orderBox([dragStart[0], dragStart[1], ix, iy]);
     dragStart = null;
     dragBox = null;
+    el("selText").textContent = "";
 
     if (box[2] - box[0] < MIN_DRAG_PX || box[3] - box[1] < MIN_DRAG_PX) {
       redraw();
       setStatus("範囲が小さすぎるため枠を描きませんでした");
+      return;
+    }
+    if (fineMode) {
+      // 微調整モード: 焼き込まずに仮の枠として保持する
+      setPending(box);
+      const hit = hitPending(cx, cy);
+      hoverCursor = hit ? HANDLE_CURSORS[hit] : null;
+      updateCursor();
       return;
     }
     pushHistory();
@@ -823,6 +1110,7 @@
 
   // ---------- Undo ----------
   function undo() {
+    if (pending) { cancelPending(); return; } // 微調整中は仮の枠を取り消すだけ(履歴は使わない)
     if (!history.length) {
       setStatus("これ以上戻せません");
       return;
@@ -863,6 +1151,7 @@
 
   async function copyImage() {
     if (!sourceCanvas) { setStatus("コピーする画像がありません"); return; }
+    commitPending();
     try {
       if (!navigator.clipboard || !window.ClipboardItem) throw new Error("このブラウザはクリップボードへの画像コピーに対応していません");
       const blob = await canvasToBlob(sourceCanvas, "image/png");
@@ -892,6 +1181,7 @@
 
   async function savePng() {
     if (!sourceCanvas) { setStatus("保存する画像がありません"); return; }
+    commitPending();
     try {
       const blob = await canvasToBlob(sourceCanvas, "image/png");
       const name = (originalBaseName || timestampName()) + ".png";
@@ -906,6 +1196,7 @@
 
   async function saveJpg() {
     if (!sourceCanvas) { setStatus("保存する画像がありません"); return; }
+    commitPending();
     try {
       const flat = flattenToWhite(sourceCanvas);
       const blob = await canvasToBlob(flat, "image/jpeg", 0.95);
@@ -978,17 +1269,28 @@
   el("btnSavePng").addEventListener("click", savePng);
   el("btnSaveJpg").addEventListener("click", saveJpg);
   el("btnUndo").addEventListener("click", undo);
+  el("btnFineCommit").addEventListener("click", () => { commitPending(); });
+  el("btnFineCancel").addEventListener("click", () => { cancelPending(); });
+  fineModeInput.addEventListener("change", () => {
+    setFineMode(fineModeInput.checked);
+    fineModeInput.blur(); // フォーカスが残ると十字キー・Enter がチェックボックスに取られないように
+  });
 
   // ---------- 線の太さ UI ----------
+  // 太さ変更後の再描画。仮の枠があれば新しい太さの許容範囲に収め直す
+  function afterThicknessChange() {
+    if (pending && sourceCanvas) { pending = clampEdges(pending); pendingStatus(); }
+    redraw();
+  }
   function commitThicknessInput() {
     const v = parseInt(thicknessInput.value, 10);
     setThickness(Number.isFinite(v) ? v : DEFAULT_THICKNESS);
-    redraw();
+    afterThicknessChange();
   }
   thicknessInput.addEventListener("change", commitThicknessInput);
-  el("btnThickMinus").addEventListener("click", () => { setThickness(thickness - 1); redraw(); });
-  el("btnThickPlus").addEventListener("click", () => { setThickness(thickness + 1); redraw(); });
-  el("btnThickReset").addEventListener("click", () => { setThickness(DEFAULT_THICKNESS); redraw(); });
+  el("btnThickMinus").addEventListener("click", () => { setThickness(thickness - 1); afterThicknessChange(); });
+  el("btnThickPlus").addEventListener("click", () => { setThickness(thickness + 1); afterThicknessChange(); });
+  el("btnThickReset").addEventListener("click", () => { setThickness(DEFAULT_THICKNESS); afterThicknessChange(); });
 
   // ---------- 表示ズーム UI ----------
   el("btnZoomOut").addEventListener("click", () => zoomByFactor(1 / ZOOM_STEP));
@@ -1022,6 +1324,21 @@
       }
       return;
     }
+    // 微調整中の仮の枠: Enter 確定 / Esc 取消 / 十字キー 移動 / Ctrl+十字キー 右端・下端の伸縮 (Shiftで10px)
+    if (pending && !isTextField && !e.altKey) {
+      if (e.key === "Enter") { e.preventDefault(); commitPending(); return; }
+      if (e.key === "Escape") { e.preventDefault(); cancelPending(); return; }
+      const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      const dir = ARROWS[e.key];
+      if (dir) {
+        e.preventDefault(); // ページスクロール・スライダー等の操作を防ぐ
+        if (editOp) return;  // マウスで操作中はキー操作しない
+        const step = e.shiftKey ? 10 : 1;
+        if (e.ctrlKey || e.metaKey) nudgePending(0, 0, dir[0] * step, dir[1] * step);
+        else nudgePending(dir[0] * step, dir[1] * step, 0, 0);
+        return;
+      }
+    }
     if (!e.ctrlKey && !e.metaKey) return;
     const key = e.key.toLowerCase();
     // ズーム系はテキスト編集と競合しないので、入力欄フォーカス中も有効(ブラウザ自体のズームは抑止)
@@ -1049,10 +1366,14 @@
       updateCursor();
     }
   });
-  window.addEventListener("blur", () => { spaceDown = false; panning = null; updateCursor(); });
+  window.addEventListener("blur", () => {
+    spaceDown = false; panning = null;
+    if (editOp) { editOp = null; pendingStatus(); }
+    updateCursor();
+  });
 
   window.addEventListener("beforeunload", (e) => {
-    if (sourceCanvas && modified) {
+    if (sourceCanvas && (modified || pending)) {
       e.preventDefault();
       e.returnValue = "";
     }
