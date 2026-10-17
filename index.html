@@ -82,6 +82,12 @@
     padding: 0;
     font-size: 15px;
   }
+  #thicknessBox #btnThickReset {
+    width: auto;
+    padding: 0 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
   #thicknessInput {
     width: 48px;
     text-align: center;
@@ -108,6 +114,12 @@
     overflow: hidden;
     min-height: 0;
   }
+  #scroller {
+    position: absolute;
+    inset: 0;
+    overflow: scroll;
+  }
+  #spacer { width: 1px; height: 1px; }
   #view {
     position: absolute;
     top: 0;
@@ -147,12 +159,67 @@
     font-size: 12px;
     color: #333;
   }
+  #statusBar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 2px;
+  }
+  #sizeLabel {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #333;
+    white-space: nowrap;
+    min-width: 110px;
+  }
   #statusText {
+    flex: 1 1 240px;
+    min-width: 0;
     font-size: 12px;
     font-weight: bold;
     color: #b00000;
-    min-height: 16px;
+    min-height: 20px;
+    line-height: 20px;
   }
+  #zoomBar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  #zoomBar button {
+    width: 26px;
+    height: 24px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: #222;
+    cursor: pointer;
+  }
+  #zoomBar button:hover:not(:disabled) { background: #dcdcdc; border-color: #c4c4c4; }
+  #zoomBar button:active:not(:disabled) { background: #cfcfcf; }
+  #zoomBar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #zoomBar svg { width: 18px; height: 18px; display: block; }
+  #zoomSelect {
+    width: 72px;
+    height: 24px;
+    font-size: 12px;
+    color: #222;
+    background: #fff;
+    border: 1px solid #b8b8b8;
+    border-radius: 4px;
+    color-scheme: light;
+  }
+  #zoomSelect:disabled { opacity: 0.5; }
+  #zoomSlider { width: 130px; margin: 0 2px; accent-color: #555; }
 </style>
 </head>
 <body>
@@ -175,14 +242,30 @@
   </div>
 
   <div id="canvasArea">
+    <div id="scroller"><div id="spacer"></div></div>
     <canvas id="view"></canvas>
     <div id="placeholder">画像をドロップ、または Ctrl+V で貼り付け</div>
     <div id="dropHint"></div>
   </div>
 
   <div id="bottom">
-    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
-    <div id="statusText"></div>
+    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く / Ctrl+ホイール: 拡大縮小 / ホイール: スクロール / スペース+ドラッグ: 移動 ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
+    <div id="statusBar">
+      <div id="sizeLabel"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2"><rect x="1.5" y="2.5" width="11" height="9" rx="0.5" stroke-dasharray="2 1.5"/></svg><span id="sizeText">—</span></div>
+      <div id="statusText"></div>
+      <div id="zoomBar">
+        <button id="btnZoomFit" type="button" title="全体表示(ウィンドウに合わせる) Ctrl+0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><rect x="8" y="8.5" width="8" height="7" rx="0.8"/></svg></button>
+        <select id="zoomSelect" title="表示倍率">
+          <option id="zoomCur" value="cur" hidden>100%</option>
+          <option value="0.125">12.5%</option><option value="0.25">25%</option><option value="0.5">50%</option>
+          <option value="1">100%</option><option value="2">200%</option><option value="3">300%</option>
+          <option value="4">400%</option><option value="8">800%</option>
+        </select>
+        <button id="btnZoomOut" type="button" title="縮小 Ctrl+−"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M7.5 10.5h6"/></svg></button>
+        <input id="zoomSlider" type="range" min="0" max="1000" step="1" value="500" title="表示倍率 (10%〜800%)">
+        <button id="btnZoomIn" type="button" title="拡大 Ctrl++"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M7.5 10.5h6"/><path d="M10.5 7.5v6"/></svg></button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -310,6 +393,10 @@
   // ============================================================
   const el = (id) => document.getElementById(id);
   const canvasArea = el("canvasArea");
+  const scroller = el("scroller");
+  const spacer = el("spacer");
+  const zoomSelect = el("zoomSelect");
+  const zoomSlider = el("zoomSlider");
   const view = el("view");
   const vctx = view.getContext("2d");
   const placeholder = el("placeholder");
@@ -322,7 +409,11 @@
   let modified = false;
   let originalBaseName = null; // 拡張子抜きの元ファイル名 (保存名に使う)
   let pasteCounter = 0;
-  let scale = 1, offsetX = 0, offsetY = 0;
+  let scale = 1, offsetX = 0, offsetY = 0;  // offsetX/Y: 画像左上の表示位置(整数CSS px)
+  let fitMode = true;        // true の間は常に「全体表示」の倍率・位置を再計算する
+  let panning = null;        // パン操作中の状態
+  let spaceDown = false;
+  const ZOOM_MIN = 0.1, ZOOM_MAX = 8, ZOOM_STEP = 1.2;
   let dragStart = null;      // 画像座標系 [x,y]
   let dragBox = null;        // 画像座標系 [x0,y0,x1,y1] (両端を含む)
   let thickness = DEFAULT_THICKNESS;
@@ -373,45 +464,147 @@
     el("btnSavePng").disabled = !has;
     el("btnSaveJpg").disabled = !has;
     el("btnUndo").disabled = history.length === 0;
+    ["btnZoomOut", "btnZoomIn", "btnZoomFit", "zoomSelect", "zoomSlider"].forEach((id) => { el(id).disabled = !has; });
   }
 
   // ---------- 表示 ----------
   function resizeViewToContainer() {
-    const rect = canvasArea.getBoundingClientRect();
+    // スクロールバーを除いた表示領域の大きさに合わせる
+    const vw = Math.max(1, scroller.clientWidth), vh = Math.max(1, scroller.clientHeight);
     const dpr = window.devicePixelRatio || 1;
-    view.style.width = rect.width + "px";
-    view.style.height = rect.height + "px";
-    view.width = Math.max(1, Math.round(rect.width * dpr));
-    view.height = Math.max(1, Math.round(rect.height * dpr));
+    view.style.width = vw + "px";
+    view.style.height = vh + "px";
+    view.width = Math.max(1, Math.round(vw * dpr));
+    view.height = Math.max(1, Math.round(vh * dpr));
     vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function redraw() {
     resizeViewToContainer();
-    const rect = canvasArea.getBoundingClientRect();
-    const cw = Math.max(1, rect.width), ch = Math.max(1, rect.height);
+    const [cw, ch] = areaSize();
+    scroller.style.visibility = sourceCanvas ? "visible" : "hidden";
     vctx.imageSmoothingEnabled = false;
     vctx.clearRect(0, 0, cw, ch);
 
     if (!sourceCanvas) {
       placeholder.style.display = "block";
+      updateZoomLabel();
       return;
     }
     placeholder.style.display = "none";
 
     const w = sourceCanvas.width, h = sourceCanvas.height;
-    const margin = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
-    scale = Math.min(1, (cw - margin * 2) / w, (ch - margin * 2) / h);
-    if (!(scale > 0)) scale = Math.min(1, cw / w, ch / h) || 0.01;
+    if (fitMode) {
+      scale = fitScaleFor(cw, ch, w, h);
+      offsetX = Math.round((cw - w * scale) / 2);
+      offsetY = Math.round((ch - h * scale) / 2);
+    }
+    clampOffsets(cw, ch, w, h);
+    syncScroller(w, h);
 
-    const dw = Math.max(1, Math.round(w * scale));
-    const dh = Math.max(1, Math.round(h * scale));
-    offsetX = Math.round((cw - dw) / 2);
-    offsetY = Math.round((ch - dh) / 2);
-
-    vctx.drawImage(sourceCanvas, 0, 0, w, h, offsetX, offsetY, dw, dh);
+    // 画面に見える範囲の元画像だけを描く(拡大時に巨大な描画先を作らない)
+    const sx0 = Math.max(0, Math.min(w, Math.floor(-offsetX / scale)));
+    const sx1 = Math.max(0, Math.min(w, Math.ceil((cw - offsetX) / scale)));
+    const sy0 = Math.max(0, Math.min(h, Math.floor(-offsetY / scale)));
+    const sy1 = Math.max(0, Math.min(h, Math.ceil((ch - offsetY) / scale)));
+    if (sx1 > sx0 && sy1 > sy0) {
+      vctx.drawImage(sourceCanvas, sx0, sy0, sx1 - sx0, sy1 - sy0,
+        offsetX + sx0 * scale, offsetY + sy0 * scale, (sx1 - sx0) * scale, (sy1 - sy0) * scale);
+    }
 
     if (dragBox) drawPreview(dragBox);
+    updateZoomLabel();
+  }
+
+  function updateZoomLabel() {
+    const has = !!sourceCanvas;
+    el("sizeText").textContent = has ? `${sourceCanvas.width} × ${sourceCanvas.height}px` : "—";
+    const sel = zoomSelect, cur = el("zoomCur");
+    if (!has) { cur.textContent = "—"; sel.value = "cur"; return; }
+    const preset = Array.from(sel.options).find((o) => o.value !== "cur" && Math.abs(parseFloat(o.value) - scale) < 0.0005);
+    if (preset) {
+      sel.value = preset.value;
+    } else {
+      cur.textContent = Math.round(scale * 100) + "%";
+      sel.value = "cur";
+    }
+    const t = Math.log(scale / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN);
+    zoomSlider.value = String(Math.round(Math.max(0, Math.min(1, t)) * 1000));
+  }
+
+  function areaSize() {
+    return [Math.max(1, scroller.clientWidth), Math.max(1, scroller.clientHeight)];
+  }
+
+  // スクロール領域(余白込みの画像サイズ)を設定し、スクロール位置を表示位置に合わせる
+  let scrollM = 10;
+  function syncScroller(w, h) {
+    const m = scrollM;
+    spacer.style.width = Math.ceil(w * scale + 2 * m) + "px";
+    spacer.style.height = Math.ceil(h * scale + 2 * m) + "px";
+    const sl = Math.max(0, m - offsetX), st = Math.max(0, m - offsetY);
+    if (scroller.scrollLeft !== sl) scroller.scrollLeft = sl;
+    if (scroller.scrollTop !== st) scroller.scrollTop = st;
+  }
+  scroller.addEventListener("scroll", () => {
+    if (!sourceCanvas) return;
+    let nx = offsetX, ny = offsetY;
+    if (scroller.scrollWidth > scroller.clientWidth) nx = Math.round(scrollM - scroller.scrollLeft);
+    if (scroller.scrollHeight > scroller.clientHeight) ny = Math.round(scrollM - scroller.scrollTop);
+    if (nx === offsetX && ny === offsetY) return;
+    offsetX = nx; offsetY = ny;
+    fitMode = false;
+    redraw();
+  });
+
+  // 「全体表示」の倍率(ウィンドウに収まる倍率、最大100%)
+  function fitScaleFor(cw, ch, w, h) {
+    const margin = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
+    let s = Math.min(1, (cw - margin * 2) / w, (ch - margin * 2) / h);
+    if (!(s > 0)) s = Math.min(1, cw / w, ch / h) || 0.01;
+    return s;
+  }
+
+  // 画像が表示領域に収まる軸は中央寄せ、はみ出す軸は「余白ドラッグ用の余白」分まで動かせる
+  function clampAxis(off, c, d, m) {
+    if (d + 2 * m <= c) return Math.round((c - d) / 2);
+    return Math.round(Math.min(m, Math.max(c - d - m, off)));
+  }
+  function clampOffsets(cw, ch, w, h) {
+    const pad = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
+    const m = Math.round(Math.max(pad * scale, 10));
+    scrollM = m;
+    offsetX = clampAxis(offsetX, cw, w * scale, m);
+    offsetY = clampAxis(offsetY, ch, h * scale, m);
+  }
+
+  // (cx,cy)=表示領域内の座標 を基準にして倍率を変える(その下の画像ピクセルは動かさない)
+  function zoomTo(newScale, cx, cy) {
+    if (!sourceCanvas) return;
+    const [cw, ch] = areaSize();
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const minS = Math.min(ZOOM_MIN, fitScaleFor(cw, ch, w, h));
+    newScale = Math.max(minS, Math.min(ZOOM_MAX, newScale));
+    const ix = (cx - offsetX) / scale;
+    const iy = (cy - offsetY) / scale;
+    scale = newScale;
+    offsetX = Math.round(cx - ix * scale);
+    offsetY = Math.round(cy - iy * scale);
+    fitMode = false;
+    redraw();
+  }
+  function zoomByFactor(f, cx, cy) {
+    if (!sourceCanvas) return;
+    if (cx === undefined) { const [cw, ch] = areaSize(); cx = cw / 2; cy = ch / 2; }
+    zoomTo(scale * f, cx, cy);
+  }
+  function zoomFit() {
+    if (!sourceCanvas) return;
+    fitMode = true;
+    redraw();
+  }
+  function updateCursor() {
+    view.style.cursor = panning ? "grabbing" : (spaceDown ? "grab" : "crosshair");
   }
 
   function drawPreview(box) {
@@ -427,8 +620,8 @@
   // ---------- 座標変換 ----------
   function canvasToImage(cx, cy) {
     const w = sourceCanvas.width, h = sourceCanvas.height;
-    const ix = Math.trunc((cx - offsetX) / scale);
-    const iy = Math.trunc((cy - offsetY) / scale);
+    const ix = Math.floor((cx - offsetX) / scale);
+    const iy = Math.floor((cy - offsetY) / scale);
     const pad = frameTotalWidth(thickness) + DRAG_MARGIN_SLACK;
     return [
       Math.max(-pad, Math.min(ix, w - 1 + pad)),
@@ -447,13 +640,14 @@
     originalBaseName = baseName;
     history = [];
     modified = false;
+    fitMode = true;
+    panning = null;
+    updateCursor();
     dragStart = dragBox = null;
     updateTitle();
     updateButtons();
     redraw();
-    let msg = `${sourceDesc}を読み込みました(${canvas.width}×${canvas.height}px)`;
-    if (scale < 1) msg += `  ※画面に収まるよう ${Math.round(scale * 100)}% で表示中(保存・コピーは元のサイズ)`;
-    setStatus(msg);
+    setStatus(`${sourceDesc}を読み込みました(${canvas.width}×${canvas.height}px)`);
   }
 
   function imageFromBitmapLike(bitmap) {
@@ -492,13 +686,51 @@
 
   // ---------- ドラッグ操作 ----------
   view.addEventListener("mousedown", (e) => {
-    if (!sourceCanvas || e.button !== 0) return;
+    if (!sourceCanvas) return;
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown)) {
+      e.preventDefault(); // 中クリックの自動スクロール等を抑止
+      if (dragStart || panning) return;
+      panning = { x: e.clientX, y: e.clientY, ox: offsetX, oy: offsetY, button: e.button };
+      updateCursor();
+      return;
+    }
+    if (e.button !== 0) return;
     const [cx, cy] = eventToCanvasXY(e);
     dragStart = canvasToImage(cx, cy);
     dragBox = null;
   });
+  view.addEventListener("contextmenu", (e) => e.preventDefault());
+  view.addEventListener("auxclick", (e) => e.preventDefault());
+
+  // Ctrl+ホイール: カーソル位置中心にズーム / ホイール: 縦スクロール / Shift+ホイール: 横スクロール
+  view.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (!sourceCanvas) return;
+    const unit = e.deltaMode === 1 ? 40 : (e.deltaMode === 2 ? scroller.clientHeight : 1);
+    if (e.ctrlKey || e.metaKey) {
+      let step = e.deltaMode === 0 ? -e.deltaY / 100 : -e.deltaY / 3;
+      step = Math.max(-3, Math.min(3, step));
+      if (!step) return;
+      const [cx, cy] = eventToCanvasXY(e);
+      zoomByFactor(Math.pow(ZOOM_STEP, step), cx, cy);
+      return;
+    }
+    let dx = e.deltaX * unit, dy = e.deltaY * unit;
+    if (e.shiftKey && dx === 0) { dx = dy; dy = 0; }
+    offsetX -= dx;
+    offsetY -= dy;
+    if (!fitMode) redraw();
+  }, { passive: false });
+  // ツールバー等の上での Ctrl+ホイール(ブラウザ自体のズーム)も抑止
+  window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
 
   window.addEventListener("mousemove", (e) => {
+    if (panning) {
+      offsetX = panning.ox + (e.clientX - panning.x);
+      offsetY = panning.oy + (e.clientY - panning.y);
+      if (!fitMode) redraw();
+      return;
+    }
     if (!sourceCanvas || !dragStart) return;
     const [cx, cy] = eventToCanvasXY(e);
     const [ix, iy] = canvasToImage(cx, cy);
@@ -507,7 +739,11 @@
   });
 
   window.addEventListener("mouseup", (e) => {
-    if (!sourceCanvas || !dragStart) return;
+    if (panning) {
+      if (e.button === panning.button) { panning = null; updateCursor(); }
+      return;
+    }
+    if (!sourceCanvas || !dragStart || e.button !== 0) return;
     const [cx, cy] = eventToCanvasXY(e);
     const [ix, iy] = canvasToImage(cx, cy);
     const box = orderBox([dragStart[0], dragStart[1], ix, iy]);
@@ -526,7 +762,7 @@
   });
 
   function pushHistory() {
-    history.push(cloneCanvas(sourceCanvas));
+    history.push({ canvas: cloneCanvas(sourceCanvas), padLeft: 0, padTop: 0 });
     if (history.length > UNDO_LIMIT) history.shift();
     updateButtons();
   }
@@ -559,6 +795,15 @@
 
     sourceCanvas = target;
     modified = true;
+    // 左・上に広がった分、画像の原点が動くので、表示位置が飛ばないよう補正(Undoで逆補正するため記録)
+    if (history.length) {
+      history[history.length - 1].padLeft = padLeft;
+      history[history.length - 1].padTop = padTop;
+    }
+    if (!fitMode) {
+      offsetX -= padLeft * scale;
+      offsetY -= padTop * scale;
+    }
     updateTitle();
     updateButtons();
     redraw();
@@ -582,7 +827,12 @@
       setStatus("これ以上戻せません");
       return;
     }
-    sourceCanvas = history.pop();
+    const entry = history.pop();
+    sourceCanvas = entry.canvas;
+    if (!fitMode) {
+      offsetX += entry.padLeft * scale;
+      offsetY += entry.padTop * scale;
+    }
     modified = true;
     updateTitle();
     updateButtons();
@@ -740,12 +990,48 @@
   el("btnThickPlus").addEventListener("click", () => { setThickness(thickness + 1); redraw(); });
   el("btnThickReset").addEventListener("click", () => { setThickness(DEFAULT_THICKNESS); redraw(); });
 
+  // ---------- 表示ズーム UI ----------
+  el("btnZoomOut").addEventListener("click", () => zoomByFactor(1 / ZOOM_STEP));
+  el("btnZoomIn").addEventListener("click", () => zoomByFactor(ZOOM_STEP));
+  el("btnZoomFit").addEventListener("click", zoomFit);
+  zoomSelect.addEventListener("change", () => {
+    const v = parseFloat(zoomSelect.value);
+    if (Number.isFinite(v)) { const [cw, ch] = areaSize(); zoomTo(v, cw / 2, ch / 2); }
+    zoomSelect.blur();
+  });
+  zoomSlider.addEventListener("input", () => {
+    const t = parseInt(zoomSlider.value, 10) / 1000;
+    const [cw, ch] = areaSize();
+    zoomTo(ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, t), cw / 2, ch / 2);
+  });
+  zoomSlider.addEventListener("change", () => zoomSlider.blur());
+
   // ---------- キーボードショートカット ----------
-  window.addEventListener("keydown", (e) => {
+  function isTextFieldActive() {
     const active = document.activeElement;
-    const isTextField = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    if (!active) return false;
+    if (active.tagName === "TEXTAREA") return true;
+    return active.tagName === "INPUT" && active.type !== "range";
+  }
+  window.addEventListener("keydown", (e) => {
+    const isTextField = isTextFieldActive();
+    if (e.key === " " || e.code === "Space") {
+      if (!isTextField) {
+        e.preventDefault(); // ボタン再押下・ページスクロールを防ぐ
+        if (!spaceDown) { spaceDown = true; updateCursor(); }
+      }
+      return;
+    }
     if (!e.ctrlKey && !e.metaKey) return;
     const key = e.key.toLowerCase();
+    // ズーム系はテキスト編集と競合しないので、入力欄フォーカス中も有効(ブラウザ自体のズームは抑止)
+    if (key === "+" || key === "=" || key === "-" || key === "_" || key === "0") {
+      e.preventDefault();
+      if (key === "0") zoomFit();
+      else if (key === "-" || key === "_") zoomByFactor(1 / ZOOM_STEP);
+      else zoomByFactor(ZOOM_STEP);
+      return;
+    }
     if (isTextField) {
       // 数値入力にフォーカスがある間は、テキスト操作の邪魔をしないショートカットのみ許可しない
       return;
@@ -755,6 +1041,15 @@
     else if (key === "z") { e.preventDefault(); undo(); }
     else if (key === "c") { e.preventDefault(); copyImage(); }
   });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.key === " " || e.code === "Space") {
+      if (!isTextFieldActive()) e.preventDefault();
+      spaceDown = false;
+      updateCursor();
+    }
+  });
+  window.addEventListener("blur", () => { spaceDown = false; panning = null; updateCursor(); });
 
   window.addEventListener("beforeunload", (e) => {
     if (sourceCanvas && modified) {
