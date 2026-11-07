@@ -268,8 +268,9 @@
       <button id="btnThickPlus" type="button">＋</button>
       <button id="btnThickReset" type="button" style="margin-left:4px;">5pxに戻す</button>
     </div>
-    <div id="fineBox" title="オンにすると、ドラッグで描いた枠を確定前に移動・大きさ変更できます">
-      <label for="fineMode"><input id="fineMode" type="checkbox">微調整モード</label>
+    <div id="fineBox">
+      <label for="fineMode" title="オンにすると、ドラッグで描いた枠を確定前に移動・大きさ変更できます"><input id="fineMode" type="checkbox">微調整モード</label>
+      <label for="combineMode" title="オンにすると、複数の四角を重ねてL字・T字などの形の枠を1本で描けます"><input id="combineMode" type="checkbox">組み合わせモード</label>
       <button id="btnFineCommit" type="button" title="Enter" disabled>確定 (Enter)</button>
       <button id="btnFineCancel" type="button" title="Esc" disabled>取消 (Esc)</button>
     </div>
@@ -283,7 +284,7 @@
   </div>
 
   <div id="bottom">
-    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く / Ctrl+ホイール: 拡大縮小 / ホイール: スクロール / スペース+ドラッグ: 移動 / 微調整モード: 枠をドラッグ・十字キーで移動、ハンドルやCtrl+十字キーで大きさ変更(Shiftで10px)、Enter: 確定、Esc: 取消 ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
+    <div id="helpText">ドラッグ: 枠を描く / Ctrl+Z: 戻す / Ctrl+C: コピー / Ctrl+S: PNG保存 / Ctrl+V: 貼り付け読込 / Ctrl+O: 開く / Ctrl+ホイール: 拡大縮小 / ホイール: スクロール / スペース+ドラッグ: 移動 / 微調整モード: 枠をドラッグ・十字キーで移動、ハンドルやCtrl+十字キーで大きさ変更(Shiftで10px)、Enter: 確定、Esc: 取消 / 組み合わせモード: ドラッグで四角を追加(重なった形の外周だけに枠)、四角をクリックで選択・ドラッグで移動、Delete: 選択中を削除、Ctrl+Z: 最後の四角を削除、Alt: 吸着なし、Enter: 確定、Esc: 取消 ※画像はサーバーに送信されず、すべてこのブラウザ内で処理されます</div>
     <div id="statusBar">
       <div id="posLabel" title="マウス位置(画像のピクセル座標)"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2" stroke-linejoin="round"><path d="M3 1.5v10l2.6-2.4 1.8 3.9 1.6-.7-1.8-3.8H11z"/></svg><span id="posText"></span></div>
       <div id="selLabel" title="ドラッグ中の範囲の大きさ"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#333" stroke-width="1.2"><rect x="1.5" y="2.5" width="11" height="9" rx="0.5" stroke-dasharray="2 1.5"/></svg><span id="selText"></span></div>
@@ -407,9 +408,123 @@
     return { padLeft, padTop, padRight, padBottom, newW, newH, drawBox };
   }
 
+  // ---------- 組み合わせモード: 複数の四角の和集合(union)の外周だけに三重枠 ----------
+  const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+  function rgbaU32(r, g, b, a) {
+    return (LITTLE_ENDIAN ? ((a << 24) | (b << 16) | (g << 8) | r) : ((r << 24) | (g << 16) | (b << 8) | a)) >>> 0;
+  }
+  // LAYER_COLORS と同じ色(白 → 赤#ED1C24 → 白)
+  const LAYER_U32 = [rgbaU32(255, 255, 255, 255), rgbaU32(0xED, 0x1C, 0x24, 255), rgbaU32(255, 255, 255, 255)];
+
+  // rects: 両端を含む [x0,y0,x1,y1] の配列。clipW/clipH を渡すと 0..clipW-1 / 0..clipH-1 に切り詰める
+  // (キャンバスの端はマスク外として扱う = 既存の単一四角でクランプされた drawBox と同じ結果)。
+  // union の各ピクセルについて「マスク外までのチェビシェフ距離」d(境界の最外周が d=1)を
+  // 外接矩形+1px の範囲だけで2パスの距離変換により求め、d が 1..T 白 / T+1..2T 赤 / 2T+1..3T 白 を塗る。
+  // 戻り値: { x, y, w, h, rgba } (外接矩形の位置と、枠以外は透明の RGBA 画素)。四角が無ければ null
+  function unionFrameRaster(rects, thickness, clipW, clipH) {
+    const list = [];
+    for (const r of rects) {
+      let [x0, y0, x1, y1] = orderBox(r);
+      if (clipW !== undefined) {
+        x0 = Math.max(x0, 0); y0 = Math.max(y0, 0);
+        x1 = Math.min(x1, clipW - 1); y1 = Math.min(y1, clipH - 1);
+      }
+      if (x0 > x1 || y0 > y1) continue;
+      list.push([x0, y0, x1, y1]);
+    }
+    if (!list.length) return null;
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const [x0, y0, x1, y1] of list) {
+      if (x0 < bx0) bx0 = x0; if (y0 < by0) by0 = y0;
+      if (x1 > bx1) bx1 = x1; if (y1 > by1) by1 = y1;
+    }
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+    const W2 = bw + 2, H2 = bh + 2;          // 周囲1pxはマスク外(0)
+    const T = thickness, cap = 3 * T + 1;    // cap 以上は「枠より内側」なので値を打ち切る(Uint8に収まる)
+    const d = new Uint8Array(W2 * H2);
+    for (const [x0, y0, x1, y1] of list) {
+      for (let y = y0; y <= y1; y++) {
+        const row = (y - by0 + 1) * W2 + 1 - bx0;
+        d.fill(cap, row + x0, row + x1 + 1);
+      }
+    }
+    // 高速化: どれか1つの四角の辺から 3T 以上内側のピクセルは、union でも d >= 3T+1(=cap)が確定している
+    // (union は各四角を含むので距離は小さくならない)。距離変換の途中の値は最終値以上なので常に cap のまま。
+    // よってこの「深い内側」を各パスで飛ばしても結果は厳密に同じ。各行の飛ばす区間 [a,b](外接矩形内のx、両端含む)を作る。
+    const D3 = 3 * T;
+    const segs = new Array(bh); // 各行の「処理する区間」[s0,e0,s1,e1,...](外接矩形内のx、両端含む)
+    for (let y = 0; y < bh; y++) {
+      const iy = y + by0;
+      const deep = [];
+      for (const [x0, y0, x1, y1] of list) {
+        if (iy - y0 >= D3 && y1 - iy >= D3 && x1 - x0 >= 2 * D3) deep.push([x0 + D3 - bx0, x1 - D3 - bx0]);
+      }
+      const s = [];
+      if (!deep.length) { s.push(0, bw - 1); segs[y] = s; continue; }
+      deep.sort((a, b) => a[0] - b[0]);
+      let cur = 0;
+      for (const [a, b] of deep) {
+        if (b < cur) continue;
+        if (a > cur) s.push(cur, a - 1);
+        cur = Math.max(cur, b + 1);
+      }
+      if (cur <= bw - 1) s.push(cur, bw - 1);
+      segs[y] = s;
+    }
+    // 前進パス(左・左上・上・右上)
+    for (let y = 1; y < H2 - 1; y++) {
+      const s = segs[y - 1];
+      for (let k = 0; k < s.length; k += 2) {
+        let i = y * W2 + 1 + s[k];
+        for (let x = s[k]; x <= s[k + 1]; x++, i++) {
+          const v = d[i];
+          if (!v) continue;
+          const up = i - W2;
+          let m = d[i - 1], t = d[up - 1];
+          if (t < m) m = t;
+          t = d[up]; if (t < m) m = t;
+          t = d[up + 1]; if (t < m) m = t;
+          m++;
+          if (m < v) d[i] = m;
+        }
+      }
+    }
+    // 後退パス(右・右下・下・左下)
+    for (let y = H2 - 2; y >= 1; y--) {
+      const s = segs[y - 1];
+      for (let k = s.length - 2; k >= 0; k -= 2) {
+        let i = y * W2 + 1 + s[k + 1];
+        for (let x = s[k + 1]; x >= s[k]; x--, i--) {
+          const v = d[i];
+          if (!v) continue;
+          const dn = i + W2;
+          let m = d[i + 1], t = d[dn + 1];
+          if (t < m) m = t;
+          t = d[dn]; if (t < m) m = t;
+          t = d[dn - 1]; if (t < m) m = t;
+          m++;
+          if (m < v) d[i] = m;
+        }
+      }
+    }
+    const out = new Uint32Array(bw * bh);
+    const c0 = LAYER_U32[0], c1 = LAYER_U32[1], c2 = LAYER_U32[2], T2 = 2 * T;
+    for (let y = 0; y < bh; y++) {
+      const s = segs[y];
+      for (let k = 0; k < s.length; k += 2) {
+        let i = (y + 1) * W2 + 1 + s[k], o = y * bw + s[k];
+        for (let x = s[k]; x <= s[k + 1]; x++, i++, o++) {
+          const v = d[i];
+          if (v && v < cap) out[o] = v <= T ? c0 : (v <= T2 ? c1 : c2);
+        }
+      }
+    }
+    return { x: bx0, y: by0, w: bw, h: bh, rgba: new Uint8ClampedArray(out.buffer) };
+  }
+
   // Node/ブラウザ両方から使えるよう window があれば公開(検証用)
   const CORE = {
-    frameTotalWidth, orderBox, frameLayerBoxes, frameLayerBands, computeExpand,
+    frameTotalWidth, orderBox, frameLayerBoxes, frameLayerBands, computeExpand, unionFrameRaster,
     LAYER_COLORS, DRAG_MARGIN_SLACK, MIN_DRAG_PX, UNDO_LIMIT,
     DEFAULT_THICKNESS, THICKNESS_MIN, THICKNESS_MAX,
   };
@@ -461,6 +576,18 @@
   let hoverCursor = null;    // 仮の枠の上にいるときのカーソル
   const HANDLE_PX = 8;       // ハンドルの画面上の大きさ(倍率に依存しない)
   const HANDLE_HIT_PX = 6;   // ハンドルの当たり判定(中心からの距離)
+  // 組み合わせモード
+  const combineModeInput = el("combineMode");
+  let combineMode = false;
+  let combineRects = [];     // 仮の四角 画像座標系 [x0,y0,x1,y1] (両端を含む整数)。後ろほど新しい
+  let combineSel = -1;       // 選択中の四角の番号(-1: なし)
+  let snapGuides = null;     // 吸着中のガイド線 { x: 境界座標|null, y: 境界座標|null }
+  let combineCache = null;   // プレビュー用の枠画素 { key, x, y, w, h, ms }
+  const combineCanvas = document.createElement("canvas");
+  let lastMouseXY = null;    // 最後のマウス位置(表示領域内座標)。Alt の押し離しで吸着をやり直すため
+  let redrawRaf = 0;
+  const SNAP_PX = 10;        // 吸着する距離(画面上のpx)
+  const GUIDE_COLOR = "#00E0FF";
 
   // ---------- 太さの永続化 ----------
   function loadThickness() {
@@ -493,6 +620,17 @@
   fineMode = loadFineMode();
   fineModeInput.checked = fineMode;
 
+  // ---------- 組み合わせモードの永続化 ----------
+  function loadCombineMode() {
+    try { return localStorage.getItem("triple_frame_combine_mode") === "1"; } catch (e) { return false; }
+  }
+  function saveCombineMode(on) {
+    try { localStorage.setItem("triple_frame_combine_mode", on ? "1" : "0"); } catch (e) { /* 保存失敗は無視 */ }
+  }
+  combineMode = loadCombineMode();
+  if (combineMode && fineMode) { fineMode = false; fineModeInput.checked = false; saveFineMode(false); } // 排他
+  combineModeInput.checked = combineMode;
+
   // ---------- 共通 ----------
   function setStatus(msg) { statusText.textContent = msg; }
 
@@ -517,9 +655,10 @@
     el("btnCopy").disabled = !has;
     el("btnSavePng").disabled = !has;
     el("btnSaveJpg").disabled = !has;
-    el("btnUndo").disabled = history.length === 0 && !pending;
-    el("btnFineCommit").disabled = !pending;
-    el("btnFineCancel").disabled = !pending;
+    const hasTemp = !!pending || combineRects.length > 0;
+    el("btnUndo").disabled = history.length === 0 && !hasTemp;
+    el("btnFineCommit").disabled = !hasTemp;
+    el("btnFineCancel").disabled = !hasTemp;
     ["btnZoomOut", "btnZoomIn", "btnZoomFit", "zoomSelect", "zoomSlider"].forEach((id) => { el(id).disabled = !has; });
   }
 
@@ -569,8 +708,14 @@
     }
 
     if (pending) drawPending(pending);
-    if (dragBox) drawPreview(dragBox);
+    if (combineMode) drawCombine();
+    else if (dragBox) drawPreview(dragBox);
     updateZoomLabel();
+  }
+  // マウス移動中の再描画は1フレームに1回へ間引く
+  function scheduleRedraw() {
+    if (redrawRaf) return;
+    redrawRaf = requestAnimationFrame(() => { redrawRaf = 0; redraw(); });
   }
 
   function updateZoomLabel() {
@@ -699,16 +844,26 @@
   // 画面座標 (cx,cy) が仮の枠のどこに当たるか: ハンドル名 / "move" / null(外)
   function hitPending(cx, cy) {
     if (!pending) return null;
-    for (const [name, hx, hy] of pendingHandles(pending)) {
-      if (Math.abs(cx - hx) <= HANDLE_HIT_PX && Math.abs(cy - hy) <= HANDLE_HIT_PX) return name;
+    return hitBox(pending, cx, cy, true);
+  }
+  // 任意の四角に対する当たり判定(withHandles: ハンドルも判定する)
+  function hitBox(box, cx, cy, withHandles) {
+    if (withHandles) {
+      for (const [name, hx, hy] of pendingHandles(box)) {
+        if (Math.abs(cx - hx) <= HANDLE_HIT_PX && Math.abs(cy - hy) <= HANDLE_HIT_PX) return name;
+      }
     }
-    const { L, T, R, B } = pendingScreenRect(pending);
+    const { L, T, R, B } = pendingScreenRect(box);
     if (cx >= L && cx < R && cy >= T && cy < B) return "move";
     return null;
   }
 
   function drawPending(box) {
     drawPreview(box);
+    drawBoxDecor(box, true);
+  }
+  // 点線の外接枠と(withHandles なら)8個のハンドル
+  function drawBoxDecor(box, withHandles) {
     const { L, T, R, B } = pendingScreenRect(box);
     // 選択中が分かる細い点線の外接枠(白の実線の上に黒の点線)
     const x = Math.round(L) - 0.5, y = Math.round(T) - 0.5;
@@ -722,6 +877,7 @@
     vctx.strokeStyle = "#000000";
     vctx.strokeRect(x, y, w, h);
     vctx.setLineDash([]);
+    if (!withHandles) { vctx.restore(); return; }
     // ハンドル(画面上で一定サイズ)
     const hs = HANDLE_PX;
     for (const [, hx, hy] of pendingHandles(box)) {
@@ -840,10 +996,285 @@
   }
 
   function setFineMode(on) {
+    if (on && combineMode) setCombineMode(false); // 組み合わせモードとは排他(仮の四角は確定してから)
     fineMode = !!on;
     fineModeInput.checked = fineMode;
     saveFineMode(fineMode);
     if (!fineMode && pending) commitPending();
+  }
+
+  // ---------- 組み合わせモード ----------
+  function setCombineMode(on) {
+    if (on && fineMode) setFineMode(false); // 微調整モードとは排他(仮の枠は確定してから)
+    combineMode = !!on;
+    combineModeInput.checked = combineMode;
+    saveCombineMode(combineMode);
+    if (!combineMode) {
+      if (combineRects.length) commitCombine();
+      else { snapGuides = null; combineCache = null; redraw(); }
+    } else if (sourceCanvas && !combineRects.length) {
+      setStatus("組み合わせモード: ドラッグで四角を追加し、重ねた形の外周に枠を描きます(Enterで確定)");
+    }
+  }
+
+  function unionBounds(list) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const r of list) {
+      x0 = Math.min(x0, r[0]); y0 = Math.min(y0, r[1]);
+      x1 = Math.max(x1, r[2]); y1 = Math.max(y1, r[3]);
+    }
+    return [x0, y0, x1, y1];
+  }
+
+  function combineStatus() {
+    if (!combineRects.length) return;
+    const s = combineRects[combineSel];
+    el("selText").textContent = s ? `${s[2] - s[0] + 1} × ${s[3] - s[1] + 1}px` : "";
+    const [x0, y0, x1, y1] = unionBounds(combineRects);
+    setStatus(`組み合わせ中: 四角${combineRects.length}個 / 全体 ${x1 - x0 + 1}×${y1 - y0 + 1}px(Enterで確定・Escで取消・Altで吸着なし)`);
+  }
+
+  function resetCombineState() {
+    combineRects = [];
+    combineSel = -1;
+    snapGuides = null;
+    combineCache = null;
+    if (editOp && editOp.combine) editOp = null;
+    hoverCursor = null;
+    updateCursor();
+    el("selText").textContent = "";
+  }
+
+  // 仮の四角の union を画像に焼き込む(pushHistory は1回だけ = Ctrl+Z 1回で全体が戻る)
+  function commitCombine() {
+    if (!combineRects.length) return false;
+    const rs = combineRects.slice();
+    resetCombineState();
+    pushHistory();
+    applyUnionToImage(rs);
+    return true;
+  }
+
+  function cancelCombine() {
+    if (!combineRects.length) return false;
+    resetCombineState();
+    updateButtons();
+    redraw();
+    setStatus("組み合わせ中の四角を取り消しました");
+    return true;
+  }
+
+  function afterCombineChange(msg) {
+    updateButtons();
+    if (combineRects.length) combineStatus();
+    else { el("selText").textContent = ""; if (msg) setStatus(msg); }
+    redraw();
+  }
+
+  function deleteSelectedRect() {
+    if (combineSel < 0 || combineSel >= combineRects.length) return;
+    combineRects.splice(combineSel, 1);
+    combineSel = -1;
+    hoverCursor = null;
+    updateCursor();
+    afterCombineChange("四角をすべて削除しました");
+  }
+
+  // 最後に追加した四角を1個削除(Ctrl+Z / 戻すボタン。履歴は使わない)
+  function removeLastRect() {
+    combineRects.pop();
+    if (combineSel >= combineRects.length) combineSel = combineRects.length - 1;
+    afterCombineChange("四角をすべて削除しました");
+  }
+
+  // キー操作: 移動 (dx,dy) / 右端・下端の伸縮 (dw,dh)。吸着はしない
+  function nudgeCombine(dx, dy, dw, dh) {
+    const r = combineRects[combineSel];
+    if (!r) return;
+    const [x0, y0, x1, y1] = r;
+    combineRects[combineSel] = (dw || dh) ? clampEdges([x0, y0, x1 + dw, y1 + dh])
+      : clampMove([x0 + dx, y0 + dy, x1 + dx, y1 + dy]);
+    combineStatus();
+    redraw();
+  }
+
+  // 吸着の候補(他の四角の辺の境界座標。左/上 = x0/y0、右/下 = x1+1/y1+1)
+  function snapCandidates(exceptIdx) {
+    const xs = [], ys = [];
+    combineRects.forEach((r, i) => {
+      if (i === exceptIdx) return;
+      xs.push(r[0], r[2] + 1);
+      ys.push(r[1], r[3] + 1);
+    });
+    return { xs, ys };
+  }
+  // v に一番近い候補(画面上 SNAP_PX 以内)。無ければ null
+  function nearestSnap(v, cands) {
+    const thr = SNAP_PX / scale;
+    let best = null, bd = Infinity;
+    for (const c of cands) {
+      const dd = Math.abs(c - v);
+      if (dd <= thr && dd < bd) { bd = dd; best = c; }
+    }
+    return best;
+  }
+  // 移動用: 2本の辺 edges のうち一番近い候補へのずらし量 { delta, at }。無ければ null
+  function nearestSnapShift(edges, cands) {
+    let best = null;
+    for (const e of edges) {
+      const c = nearestSnap(e, cands);
+      if (c !== null && (!best || Math.abs(c - e) < Math.abs(best.delta))) best = { delta: c - e, at: c };
+    }
+    return best;
+  }
+
+  // 新しい四角を描くドラッグ: 開始点と現在の点から四角を作り、動いている辺だけ吸着させる
+  function combineDragBox(cx, cy, noSnap) {
+    let [ix, iy] = canvasToImage(cx, cy);
+    const [sx, sy] = dragStart;
+    let gx = null, gy = null;
+    if (!noSnap && combineRects.length) {
+      const { xs, ys } = snapCandidates(-1);
+      const { minX, minY, maxX, maxY } = pendingLimits();
+      const right = ix >= sx, down = iy >= sy;
+      const cxs = nearestSnap(right ? ix + 1 : ix, xs);
+      if (cxs !== null) {
+        const nx = Math.max(minX, Math.min(maxX, right ? cxs - 1 : cxs));
+        const b = orderBox([sx, sy, nx, iy]);
+        if (b[0] === cxs || b[2] + 1 === cxs) { ix = nx; gx = cxs; }
+      }
+      const cys = nearestSnap(down ? iy + 1 : iy, ys);
+      if (cys !== null) {
+        const ny = Math.max(minY, Math.min(maxY, down ? cys - 1 : cys));
+        const b = orderBox([sx, sy, ix, ny]);
+        if (b[1] === cys || b[3] + 1 === cys) { iy = ny; gy = cys; }
+      }
+    }
+    snapGuides = (gx !== null || gy !== null) ? { x: gx, y: gy } : null;
+    return orderBox([sx, sy, ix, iy]);
+  }
+
+  // 仮の四角の移動・リサイズ(マウス)。吸着あり
+  function updateCombineOp(cx, cy, noSnap) {
+    const op = editOp;
+    const [rx, ry] = canvasToImageRaw(cx, cy);
+    const dx = Math.floor(rx) - Math.floor(op.rx);
+    const dy = Math.floor(ry) - Math.floor(op.ry);
+    let [x0, y0, x1, y1] = op.orig;
+    if (!dx && !dy) {
+      // まだ1pxも動いていない(クリックだけ等)ときは吸着させずに元の位置のまま
+      combineRects[op.idx] = op.orig.slice();
+      snapGuides = null;
+      combineStatus();
+      scheduleRedraw();
+      return;
+    }
+    const snapOn = !noSnap && combineRects.length > 1;
+    const cand = snapOn ? snapCandidates(op.idx) : null;
+    let gx = null, gy = null;
+    if (op.type === "move") {
+      let nb = clampMove([x0 + dx, y0 + dy, x1 + dx, y1 + dy]);
+      if (snapOn) {
+        const sx = nearestSnapShift([nb[0], nb[2] + 1], cand.xs);
+        const sy = nearestSnapShift([nb[1], nb[3] + 1], cand.ys);
+        if (sx || sy) {
+          const ddx = sx ? sx.delta : 0, ddy = sy ? sy.delta : 0;
+          nb = clampMove([nb[0] + ddx, nb[1] + ddy, nb[2] + ddx, nb[3] + ddy]);
+          if (sx && (nb[0] === sx.at || nb[2] + 1 === sx.at)) gx = sx.at;
+          if (sy && (nb[1] === sy.at || nb[3] + 1 === sy.at)) gy = sy.at;
+        }
+      }
+      combineRects[op.idx] = nb;
+    } else {
+      const h = op.type;
+      const { minX, minY, maxX, maxY } = pendingLimits();
+      const snap = (v, cs) => (snapOn ? nearestSnap(v, cs) : null);
+      if (h.includes("w")) {
+        const c = snap(x0 + dx, cand && cand.xs);
+        x0 = Math.max(minX, Math.min(c !== null ? c : x0 + dx, x1 - MIN_DRAG_PX));
+        if (c !== null && x0 === c) gx = c;
+      }
+      if (h.includes("e")) {
+        const c = snap(x1 + 1 + dx, cand && cand.xs);
+        x1 = Math.min(maxX, Math.max(c !== null ? c - 1 : x1 + dx, x0 + MIN_DRAG_PX));
+        if (c !== null && x1 + 1 === c) gx = c;
+      }
+      if (h.includes("n")) {
+        const c = snap(y0 + dy, cand && cand.ys);
+        y0 = Math.max(minY, Math.min(c !== null ? c : y0 + dy, y1 - MIN_DRAG_PX));
+        if (c !== null && y0 === c) gy = c;
+      }
+      if (h.includes("s")) {
+        const c = snap(y1 + 1 + dy, cand && cand.ys);
+        y1 = Math.min(maxY, Math.max(c !== null ? c - 1 : y1 + dy, y0 + MIN_DRAG_PX));
+        if (c !== null && y1 + 1 === c) gy = c;
+      }
+      combineRects[op.idx] = [x0, y0, x1, y1];
+    }
+    snapGuides = (gx !== null || gy !== null) ? { x: gx, y: gy } : null;
+    combineStatus();
+    scheduleRedraw();
+  }
+
+  // 画面座標 (cx,cy) が当たる仮の四角: { idx, type: ハンドル名|"move" } / null
+  // 選択中の四角のハンドルを優先し、内側は後から描いた四角を優先
+  function hitCombine(cx, cy) {
+    const s = combineRects[combineSel];
+    if (s) {
+      const hh = hitBox(s, cx, cy, true);
+      if (hh && hh !== "move") return { idx: combineSel, type: hh };
+    }
+    for (let i = combineRects.length - 1; i >= 0; i--) {
+      if (hitBox(combineRects[i], cx, cy, false)) return { idx: i, type: "move" };
+    }
+    return null;
+  }
+
+  // プレビュー: union の三重枠(元画像解像度で計算してキャッシュ)+各四角の点線+選択中のハンドル+ガイド線
+  function drawCombine() {
+    const list = combineRects.slice();
+    if (dragBox) list.push(dragBox);
+    if (list.length) {
+      const key = thickness + "|" + list.map((r) => r.join(",")).join(";");
+      if (!combineCache || combineCache.key !== key) {
+        const t0 = performance.now();
+        const ras = unionFrameRaster(list, thickness);
+        combineCanvas.width = ras.w;
+        combineCanvas.height = ras.h;
+        combineCanvas.getContext("2d").putImageData(new ImageData(ras.rgba, ras.w, ras.h), 0, 0);
+        combineCache = { key, x: ras.x, y: ras.y, w: ras.w, h: ras.h, ms: performance.now() - t0 };
+      }
+      const c = combineCache;
+      const [cw, ch] = areaSize();
+      // 画面に見える範囲だけを描く
+      const sx0 = Math.max(c.x, Math.floor(-offsetX / scale)), sx1 = Math.min(c.x + c.w, Math.ceil((cw - offsetX) / scale));
+      const sy0 = Math.max(c.y, Math.floor(-offsetY / scale)), sy1 = Math.min(c.y + c.h, Math.ceil((ch - offsetY) / scale));
+      if (sx1 > sx0 && sy1 > sy0) {
+        vctx.drawImage(combineCanvas, sx0 - c.x, sy0 - c.y, sx1 - sx0, sy1 - sy0,
+          offsetX + sx0 * scale, offsetY + sy0 * scale, (sx1 - sx0) * scale, (sy1 - sy0) * scale);
+      }
+      for (const r of list) drawBoxDecor(r, false);
+      const s = combineRects[combineSel];
+      if (s && !dragBox) drawBoxDecor(s, true);
+    }
+    if (snapGuides) {
+      const [cw, ch] = areaSize();
+      vctx.save();
+      vctx.strokeStyle = GUIDE_COLOR;
+      vctx.lineWidth = 1;
+      vctx.setLineDash([]);
+      vctx.beginPath();
+      if (snapGuides.x !== null) {
+        const gx = Math.round(offsetX + snapGuides.x * scale) + 0.5;
+        vctx.moveTo(gx, 0); vctx.lineTo(gx, ch);
+      }
+      if (snapGuides.y !== null) {
+        const gy = Math.round(offsetY + snapGuides.y * scale) + 0.5;
+        vctx.moveTo(0, gy); vctx.lineTo(cw, gy);
+      }
+      vctx.stroke();
+      vctx.restore();
+    }
   }
 
   // ---------- 座標変換 ----------
@@ -872,6 +1303,7 @@
     fitMode = true;
     panning = null;
     pending = editOp = hoverCursor = null;
+    resetCombineState(); // 組み合わせ中の仮の四角は破棄
     updateCursor();
     dragStart = dragBox = null;
     el("selText").textContent = "";
@@ -927,6 +1359,25 @@
     }
     if (e.button !== 0) return;
     const [cx, cy] = eventToCanvasXY(e);
+    if (combineMode) {
+      e.preventDefault(); // Alt+ドラッグでブラウザのメニュー等が出ないように
+      if (dragStart || editOp) return;
+      const hit = hitCombine(cx, cy);
+      if (hit) {
+        const [rx, ry] = canvasToImageRaw(cx, cy);
+        combineSel = hit.idx;
+        editOp = { combine: true, idx: hit.idx, type: hit.type, rx, ry,
+          orig: combineRects[hit.idx].slice(), cursor: HANDLE_CURSORS[hit.type] };
+        updateCursor();
+        combineStatus();
+        redraw();
+        return;
+      }
+      // どの四角にも当たらない: 新しい四角を描き始める(確定はしない)
+      dragStart = canvasToImage(cx, cy);
+      dragBox = null;
+      return;
+    }
     if (pending) {
       const hit = hitPending(cx, cy);
       if (hit) {
@@ -988,9 +1439,25 @@
       if (!fitMode) redraw();
       return;
     }
+    if (sourceCanvas) lastMouseXY = eventToCanvasXY(e);
     if (sourceCanvas && editOp) {
       const [cx, cy] = eventToCanvasXY(e);
-      updateEditOp(cx, cy);
+      if (editOp.combine) updateCombineOp(cx, cy, e.altKey);
+      else updateEditOp(cx, cy);
+      return;
+    }
+    if (combineMode && combineRects.length && !dragStart) {
+      const [cx, cy] = eventToCanvasXY(e);
+      const hit = e.target === view ? hitCombine(cx, cy) : null;
+      const cur = hit ? HANDLE_CURSORS[hit.type] : null;
+      if (cur !== hoverCursor) { hoverCursor = cur; updateCursor(); }
+      return;
+    }
+    if (combineMode && sourceCanvas && dragStart) {
+      const [cx, cy] = eventToCanvasXY(e);
+      dragBox = combineDragBox(cx, cy, e.altKey);
+      el("selText").textContent = `${dragBox[2] - dragBox[0] + 1} × ${dragBox[3] - dragBox[1] + 1}px`;
+      scheduleRedraw();
       return;
     }
     if (pending && !dragStart) {
@@ -1016,6 +1483,14 @@
     }
     if (editOp) {
       if (e.button !== 0) return;
+      if (editOp.combine) {
+        editOp = null;
+        snapGuides = null;
+        updateCursor();
+        combineStatus();
+        redraw();
+        return;
+      }
       editOp = null;
       updateCursor();
       pendingStatus();
@@ -1023,6 +1498,32 @@
     }
     if (!sourceCanvas || !dragStart || e.button !== 0) return;
     const [cx, cy] = eventToCanvasXY(e);
+    if (combineMode) {
+      const cbox = combineDragBox(cx, cy, e.altKey);
+      dragStart = null;
+      dragBox = null;
+      snapGuides = null;
+      if (cbox[2] === cbox[0] && cbox[3] === cbox[1]) {
+        // クリックだけ(四角の外): 選択を外す
+        combineSel = -1;
+        if (combineRects.length) combineStatus(); else el("selText").textContent = "";
+        redraw();
+        return;
+      }
+      if (cbox[2] - cbox[0] < MIN_DRAG_PX || cbox[3] - cbox[1] < MIN_DRAG_PX) {
+        if (combineRects.length) combineStatus(); else el("selText").textContent = "";
+        redraw();
+        setStatus("範囲が小さすぎるため四角を追加しませんでした");
+        return;
+      }
+      combineRects.push(cbox);
+      combineSel = combineRects.length - 1;
+      const hit = hitCombine(cx, cy);
+      hoverCursor = hit ? HANDLE_CURSORS[hit.type] : null;
+      updateCursor();
+      afterCombineChange();
+      return;
+    }
     const [ix, iy] = canvasToImage(cx, cy);
     const box = orderBox([dragStart[0], dragStart[1], ix, iy]);
     dragStart = null;
@@ -1056,9 +1557,42 @@
 
   function applyFrameToImage(expandBox) {
     const w = sourceCanvas.width, h = sourceCanvas.height;
-    const { padLeft, padTop, padRight, padBottom, newW, newH, drawBox } =
-      computeExpand(w, h, expandBox, thickness);
+    const ex = computeExpand(w, h, expandBox, thickness);
+    const target = makeExpandedTarget(ex);
+    const tctx = target.getContext("2d");
+    tctx.imageSmoothingEnabled = false;
+    const bands = frameLayerBands(ex.drawBox, thickness);
+    for (const { color, rects } of bands) {
+      tctx.fillStyle = color;
+      for (const [x, y, ww, hh] of rects) tctx.fillRect(x, y, ww, hh);
+    }
+    const bw = expandBox[2] - expandBox[0], bh = expandBox[3] - expandBox[1];
+    finishApply(target, ex, `枠を描きました(位置 ${Math.max(0, expandBox[0])},${Math.max(0, expandBox[1])} / 大きさ ${bw}×${bh}px)`);
+  }
 
+  // 組み合わせモード: 四角の union の外周に三重枠を焼き込む(はみ出しは各辺最大 枠総幅 まで白で拡張)
+  function applyUnionToImage(rs) {
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    const [ux0, uy0, ux1, uy1] = unionBounds(rs);
+    const ex = computeExpand(w, h, [ux0, uy0, ux1 + 1, uy1 + 1], thickness);
+    const target = makeExpandedTarget(ex);
+    const shifted = rs.map((r) => [r[0] + ex.padLeft, r[1] + ex.padTop, r[2] + ex.padLeft, r[3] + ex.padTop]);
+    const ras = unionFrameRaster(shifted, thickness, ex.newW, ex.newH);
+    if (ras) {
+      const tmp = document.createElement("canvas");
+      tmp.width = ras.w;
+      tmp.height = ras.h;
+      tmp.getContext("2d").putImageData(new ImageData(ras.rgba, ras.w, ras.h), 0, 0);
+      const tctx = target.getContext("2d");
+      tctx.imageSmoothingEnabled = false;
+      tctx.drawImage(tmp, ras.x, ras.y); // 枠以外は透明なので元の画素はそのまま
+    }
+    finishApply(target, ex, `枠を描きました(四角${rs.length}個を組み合わせ / 全体 ${ux1 - ux0 + 1}×${uy1 - uy0 + 1}px)`);
+  }
+
+  // 拡張が必要なら白背景の新しいキャンバスに元画像を置き、不要なら複製を返す
+  function makeExpandedTarget(ex) {
+    const { padLeft, padTop, padRight, padBottom, newW, newH } = ex;
     let target;
     if (padLeft || padTop || padRight || padBottom) {
       target = document.createElement("canvas");
@@ -1072,14 +1606,12 @@
     } else {
       target = cloneCanvas(sourceCanvas);
     }
-    const tctx = target.getContext("2d");
-    tctx.imageSmoothingEnabled = false;
-    const bands = frameLayerBands(drawBox, thickness);
-    for (const { color, rects } of bands) {
-      tctx.fillStyle = color;
-      for (const [x, y, ww, hh] of rects) tctx.fillRect(x, y, ww, hh);
-    }
+    return target;
+  }
 
+  // 焼き込み後の共通処理(表示位置の補正・Undo用の記録・ステータス)
+  function finishApply(target, ex, plainMsg) {
+    const { padLeft, padTop, padRight, padBottom, newW, newH } = ex;
     sourceCanvas = target;
     modified = true;
     // 左・上に広がった分、画像の原点が動くので、表示位置が飛ばないよう補正(Undoで逆補正するため記録)
@@ -1103,14 +1635,18 @@
       if (padBottom) parts.push(`下+${padBottom}px`);
       setStatus(`画像を${parts.join("・")} 広げました(最終サイズ ${newW}×${newH}px)`);
     } else {
-      const bw = expandBox[2] - expandBox[0], bh = expandBox[3] - expandBox[1];
-      setStatus(`枠を描きました(位置 ${Math.max(0, expandBox[0])},${Math.max(0, expandBox[1])} / 大きさ ${bw}×${bh}px)`);
+      setStatus(plainMsg);
     }
   }
 
   // ---------- Undo ----------
   function undo() {
     if (pending) { cancelPending(); return; } // 微調整中は仮の枠を取り消すだけ(履歴は使わない)
+    if (combineRects.length) { // 組み合わせ中は最後に追加した四角を1個消すだけ(履歴は使わない)
+      if (editOp || dragStart) return;
+      removeLastRect();
+      return;
+    }
     if (!history.length) {
       setStatus("これ以上戻せません");
       return;
@@ -1152,6 +1688,7 @@
   async function copyImage() {
     if (!sourceCanvas) { setStatus("コピーする画像がありません"); return; }
     commitPending();
+    commitCombine();
     try {
       if (!navigator.clipboard || !window.ClipboardItem) throw new Error("このブラウザはクリップボードへの画像コピーに対応していません");
       const blob = await canvasToBlob(sourceCanvas, "image/png");
@@ -1182,6 +1719,7 @@
   async function savePng() {
     if (!sourceCanvas) { setStatus("保存する画像がありません"); return; }
     commitPending();
+    commitCombine();
     try {
       const blob = await canvasToBlob(sourceCanvas, "image/png");
       const name = (originalBaseName || timestampName()) + ".png";
@@ -1197,6 +1735,7 @@
   async function saveJpg() {
     if (!sourceCanvas) { setStatus("保存する画像がありません"); return; }
     commitPending();
+    commitCombine();
     try {
       const flat = flattenToWhite(sourceCanvas);
       const blob = await canvasToBlob(flat, "image/jpeg", 0.95);
@@ -1269,17 +1808,22 @@
   el("btnSavePng").addEventListener("click", savePng);
   el("btnSaveJpg").addEventListener("click", saveJpg);
   el("btnUndo").addEventListener("click", undo);
-  el("btnFineCommit").addEventListener("click", () => { commitPending(); });
-  el("btnFineCancel").addEventListener("click", () => { cancelPending(); });
+  el("btnFineCommit").addEventListener("click", () => { commitPending() || commitCombine(); });
+  el("btnFineCancel").addEventListener("click", () => { cancelPending() || cancelCombine(); });
   fineModeInput.addEventListener("change", () => {
     setFineMode(fineModeInput.checked);
     fineModeInput.blur(); // フォーカスが残ると十字キー・Enter がチェックボックスに取られないように
   });
+  combineModeInput.addEventListener("change", () => {
+    setCombineMode(combineModeInput.checked);
+    combineModeInput.blur();
+  });
 
   // ---------- 線の太さ UI ----------
-  // 太さ変更後の再描画。仮の枠があれば新しい太さの許容範囲に収め直す
+  // 太さ変更後の再描画。仮の枠・仮の四角があれば新しい太さの許容範囲に収め直す
   function afterThicknessChange() {
     if (pending && sourceCanvas) { pending = clampEdges(pending); pendingStatus(); }
+    if (combineRects.length && sourceCanvas) { combineRects = combineRects.map(clampEdges); combineStatus(); }
     redraw();
   }
   function commitThicknessInput() {
@@ -1339,6 +1883,32 @@
         return;
       }
     }
+    // 組み合わせモード: Alt は吸着なし(ブラウザのメニューに取られないよう抑止し、ドラッグ中なら吸着をやり直す)
+    if (combineMode && sourceCanvas && e.key === "Alt") {
+      e.preventDefault();
+      refreshCombineDrag(true);
+      return;
+    }
+    // 組み合わせ中の仮の四角: Enter 確定 / Esc 取消 / Delete 選択中を削除 / 十字キー 移動 / Ctrl+十字キー 右端・下端の伸縮
+    if (combineMode && combineRects.length && !isTextField && !e.altKey) {
+      if (e.key === "Enter") { e.preventDefault(); if (!editOp && !dragStart) commitCombine(); return; }
+      if (e.key === "Escape") { e.preventDefault(); if (!editOp && !dragStart) cancelCombine(); return; }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        if (!editOp && !dragStart) deleteSelectedRect();
+        return;
+      }
+      const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      const dir = ARROWS[e.key];
+      if (dir && combineSel >= 0) {
+        e.preventDefault();
+        if (editOp || dragStart) return;
+        const step = e.shiftKey ? 10 : 1;
+        if (e.ctrlKey || e.metaKey) nudgeCombine(0, 0, dir[0] * step, dir[1] * step);
+        else nudgeCombine(dir[0] * step, dir[1] * step, 0, 0);
+        return;
+      }
+    }
     if (!e.ctrlKey && !e.metaKey) return;
     const key = e.key.toLowerCase();
     // ズーム系はテキスト編集と競合しないので、入力欄フォーカス中も有効(ブラウザ自体のズームは抑止)
@@ -1365,15 +1935,32 @@
       spaceDown = false;
       updateCursor();
     }
+    if (combineMode && sourceCanvas && e.key === "Alt") {
+      e.preventDefault();
+      refreshCombineDrag(false);
+    }
   });
+  // Alt の押し離しで、マウスを動かさなくても吸着の有無を切り替える
+  function refreshCombineDrag(altDown) {
+    if (!lastMouseXY) return;
+    const [cx, cy] = lastMouseXY;
+    if (editOp && editOp.combine) {
+      updateCombineOp(cx, cy, altDown);
+    } else if (dragStart) {
+      dragBox = combineDragBox(cx, cy, altDown);
+      el("selText").textContent = `${dragBox[2] - dragBox[0] + 1} × ${dragBox[3] - dragBox[1] + 1}px`;
+      scheduleRedraw();
+    }
+  }
   window.addEventListener("blur", () => {
     spaceDown = false; panning = null;
+    if (editOp && editOp.combine) { editOp = null; snapGuides = null; combineStatus(); redraw(); }
     if (editOp) { editOp = null; pendingStatus(); }
     updateCursor();
   });
 
   window.addEventListener("beforeunload", (e) => {
-    if (sourceCanvas && (modified || pending)) {
+    if (sourceCanvas && (modified || pending || combineRects.length)) {
       e.preventDefault();
       e.returnValue = "";
     }
